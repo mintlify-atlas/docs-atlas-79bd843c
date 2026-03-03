@@ -1,0 +1,112 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Parserator",
+  "projectDescription": "Type-safe parser combinators library for TypeScript with generator syntax and rich error messages",
+  "theme": "mint",
+  "primaryColor": "#7C3AED",
+  "lightColor": "#A78BFA",
+  "darkColor": "#5B21B6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": ["introduction", "installation", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/parsers",
+              "concepts/generator-syntax",
+              "concepts/combinators",
+              "concepts/error-handling"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/basic-parsers",
+              "guides/complex-parsers",
+              "guides/error-recovery",
+              "guides/performance"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/json-parser",
+              "examples/ini-parser",
+              "examples/scheme-parser",
+              "examples/expression-parser"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/parser",
+              "api/state",
+              "api/either"
+            ]
+          },
+          {
+            "group": "Combinators",
+            "pages": [
+              "api/combinators",
+              "api/optimized"
+            ]
+          },
+          {
+            "group": "Error Handling",
+            "pages": [
+              "api/errors",
+              "api/error-formatter",
+              "api/hints"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "api/fastpath"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Generator-based monadic syntax for readable parser composition",
+    "Full TypeScript type inference from input to output",
+    "Rich error messages with position tracking and typo suggestions",
+    "Commit/backtracking control for precise error reporting",
+    "Performance-optimized fast paths for common operations",
+    "Zero runtime dependencies"
+  ],
+  "publicApiSurface": [
+    "Parser<T> - Core parser class with monadic operations",
+    "parser() - Create parsers using generator syntax",
+    "char() - Match single characters",
+    "string() - Match exact strings",
+    "regex() - Match regular expressions",
+    "digit, letter, whitespace - Common character parsers",
+    "many(), many1() - Zero or more, one or more repetitions",
+    "or() - Try alternative parsers",
+    "optional() - Zero or one occurrences",
+    "sepBy(), sepBy1() - Parse separated lists",
+    "between() - Parse delimited content",
+    "lookahead() - Look ahead without consuming input",
+    "notFollowedBy() - Negative lookahead",
+    "commit() - Prevent backtracking for better errors",
+    "manyChar(), manyDigit() - Optimized fast-path parsers",
+    "Either<T, E> - Result type for success/failure",
+    "ParserState - Parser state management",
+    "ParseError, ParseErrorBundle - Error types",
+    "formatError() - Format errors with source snippets"
+  ]
+}
