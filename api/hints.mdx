@@ -1,0 +1,348 @@
+---
+title: "Hints"
+description: "Intelligent typo suggestions using Levenshtein distance"
+---
+
+## Overview
+
+The hints system provides intelligent suggestions when users make typos in their input. It uses the Levenshtein distance algorithm to find the closest valid alternatives and automatically includes them in error messages.
+
+## Levenshtein Distance
+
+The Levenshtein distance measures the minimum number of single-character edits (insertions, deletions, or substitutions) needed to change one string into another.
+
+```typescript
+function levenshteinDistance(a: string, b: string): number
+```
+
+### How It Works
+
+The algorithm uses dynamic programming to compute the edit distance:
+
+1. Creates a matrix of size `(b.length + 1) × (a.length + 1)`
+2. Initializes first row and column with indices
+3. Fills matrix by comparing characters and taking minimum of:
+   - Deletion: `matrix[j][i-1] + 1`
+   - Insertion: `matrix[j-1][i] + 1`
+   - Substitution: `matrix[j-1][i-1] + indicator` (0 if chars match, 1 if different)
+4. Returns bottom-right cell value
+
+### Examples
+
+```typescript
+import { levenshteinDistance } from "parserator";
+
+levenshteinDistance("lambda", "lamdba");  // 2 (swap 'd' and 'b')
+levenshteinDistance("function", "functoin");  // 2 (swap 'i' and 'o', then 'o' and 'n')
+levenshteinDistance("let", "let");  // 0 (identical)
+levenshteinDistance("var", "bar");  // 1 (substitute 'v' with 'b')
+levenshteinDistance("const", "cost");  // 1 (delete 'n')
+```
+
+## Generating Hints
+
+The `generateHints` function finds the closest matches from a list of expected values.
+
+```typescript
+function generateHints(
+  found: string,         // What the user typed
+  expected: string[],    // Valid options
+  maxDistance?: number,  // Maximum edit distance (default: 2)
+  maxHints?: number      // Maximum hints to return (default: 3)
+): string[]
+```
+
+### Parameters
+
+- **found**: The string the user actually typed
+- **expected**: Array of valid/expected strings to compare against
+- **maxDistance**: Maximum edit distance to consider (default: 2)
+  - Distance 1: Very close typos (single char error)
+  - Distance 2: Moderate typos (two char errors)
+  - Distance 3+: Distant matches (rarely useful)
+- **maxHints**: Maximum number of hints to return (default: 3)
+
+### Return Value
+
+Returns an array of suggested strings, sorted by edit distance (closest first).
+
+### Examples
+
+```typescript
+import { generateHints } from "parserator";
+
+const keywords = ["lambda", "let", "if", "cond", "define", "quote"];
+
+// Typo with distance 2
+generateHints("lamdba", keywords);
+// Returns: ["lambda"]
+
+// Typo with distance 1
+generateHints("lt", keywords);
+// Returns: ["let"]
+
+// Multiple close matches
+const jsKeywords = ["function", "const", "let", "var", "class"];
+generateHints("lat", jsKeywords);
+// Returns: ["let", "var"]  // Both have distance 2
+
+// No close matches (distance > 2)
+generateHints("xyz", keywords);
+// Returns: []
+
+// Custom distance and max hints
+generateHints("functoin", jsKeywords, 3, 1);
+// Returns: ["function"]  // Only 1 hint, distance 3 allowed
+```
+
+## Parser Integration
+
+The hints system integrates seamlessly with Parserator's error handling.
+
+### keywordWithHints
+
+Creates a parser for a specific keyword with automatic hint generation.
+
+```typescript
+function keywordWithHints(
+  keywords: string[]
+): (keyword: string) => Parser<string>
+```
+
+**Example:**
+```typescript
+const schemeKeywords = ["lambda", "let", "if", "cond", "define", "quote"];
+const lambdaParser = keywordWithHints(schemeKeywords)("lambda");
+
+// Parsing "lamdba" will suggest "lambda"
+const result = lambdaParser.parse("lamdba");
+// Error: Unexpected: lamdba
+//        Did you mean: lambda?
+```
+
+**How it works:**
+
+1. Tries to match the expected keyword exactly
+2. If no match, extracts what the user typed (identifier pattern)
+3. Generates hints using `generateHints()`
+4. Returns an `Unexpected` error with hints attached
+
+### anyKeywordWithHints
+
+Creates a parser that matches any keyword from a list with hint generation.
+
+```typescript
+function anyKeywordWithHints(keywords: string[]): Parser<string>
+```
+
+**Example:**
+```typescript
+const jsKeywords = ["function", "const", "let", "var", "class", "if", "else"];
+const keywordParser = anyKeywordWithHints(jsKeywords);
+
+// Parsing "functoin" suggests "function"
+const result = keywordParser.parse("functoin");
+// Error: Unexpected: functoin
+//        Did you mean: function?
+
+// Parsing "clas" suggests "class"
+const result2 = keywordParser.parse("clas");
+// Error: Unexpected: clas
+//        Did you mean: class?
+```
+
+### stringWithHints
+
+Creates a parser for string literals with hint generation for common mistakes.
+
+```typescript
+function stringWithHints(validStrings: string[]): Parser<string>
+```
+
+**Example:**
+```typescript
+const colorParser = stringWithHints(["red", "green", "blue", "yellow"]);
+
+// Parsing '"gren"' suggests "green"
+const result = colorParser.parse('"gren"');
+// Error: Unexpected: "gren"
+//        Did you mean: "green"?
+
+// Parsing '"blu"' suggests "blue"
+const result2 = colorParser.parse('"blu"');
+// Error: Unexpected: "blu"
+//        Did you mean: "blue"?
+```
+
+**How it works:**
+
+1. Parses the quoted string
+2. Checks if content is in `validStrings`
+3. If not, generates hints for the content
+4. Returns hints with quotes preserved
+
+## Creating Custom Hint Parsers
+
+You can create your own parsers with hint support:
+
+```typescript
+import { Parser, ParseError, Span, generateHints } from "parserator";
+
+function customParserWithHints(
+  validValues: string[],
+  pattern: RegExp
+): Parser<string> {
+  return new Parser(state => {
+    // Try exact match
+    for (const value of validValues) {
+      if (State.remaining(state).startsWith(value)) {
+        return Parser.succeed(value, State.consume(state, value.length));
+      }
+    }
+
+    // Extract what was typed
+    const match = State.remaining(state).match(pattern);
+    const found = match ? match[0] : "end of input";
+
+    // Generate hints
+    const hints = generateHints(found, validValues);
+
+    // Create error with hints
+    const error: ParseError = {
+      tag: "Unexpected",
+      span: Span(state, found.length),
+      found,
+      context: state.labelStack || [],
+      ...(hints.length > 0 && { hints })
+    };
+
+    return Parser.failRich({ errors: [error] }, state);
+  });
+}
+
+// Example usage
+const operators = ["+", "-", "*", "/", "**", "//"];
+const operatorParser = customParserWithHints(
+  operators,
+  /^[+\-*/]+/
+);
+```
+
+## Tuning Hint Quality
+
+### Choosing maxDistance
+
+```typescript
+// Strict matching (only single-char typos)
+generateHints("functoin", keywords, 1);
+// Returns: []  // Distance is 2, too far
+
+// Moderate matching (default)
+generateHints("functoin", keywords, 2);
+// Returns: ["function"]
+
+// Loose matching
+generateHints("func", keywords, 3);
+// Returns: ["function"]  // Distance 4 ("tion" deleted)
+```
+
+**Recommendations:**
+- Use `maxDistance: 1` for very strict matching (single typos only)
+- Use `maxDistance: 2` for most cases (default, good balance)
+- Use `maxDistance: 3` for forgiving matching (may give false positives)
+
+### Limiting Hint Count
+
+```typescript
+const many = ["red", "reed", "read", "bread", "bead", "bed"];
+
+// Show all close matches
+generateHints("ред", many, 2, 10);
+// Returns: ["red", "reed", "read", "bed"]  // All within distance 2
+
+// Limit to top 2
+generateHints("ред", many, 2, 2);
+// Returns: ["red", "reed"]  // Closest 2 only
+```
+
+**Recommendations:**
+- Use `maxHints: 1` when you want a single best suggestion
+- Use `maxHints: 3` for typical cases (default)
+- Use higher values only when you have many similar valid options
+
+## Error Message Display
+
+Hints are automatically displayed by the error formatter:
+
+```typescript
+const error: ParseError = {
+  tag: "Unexpected",
+  span: Span(state, 5),
+  found: "lamdba",
+  context: ["expression"],
+  hints: ["lambda"]
+};
+
+const bundle = new ParseErrorBundle([error], source);
+console.log(bundle.format("ansi"));
+```
+
+**Output:**
+```
+Error at line 1, column 1:
+> 1 | lamdba x -> x
+    |
+    ^^^^^^
+  Unexpected: lamdba
+
+  Did you mean: lambda?
+```
+
+Multiple hints are shown separately:
+
+```typescript
+hints: ["let", "const", "var"]
+```
+
+**Output:**
+```
+Did you mean: let?
+Did you mean: const?
+Did you mean: var?
+```
+
+## Best Practices
+
+1. **Keep expected lists focused**: Only include truly valid options
+2. **Use reasonable maxDistance**: Default of 2 works well for most cases
+3. **Limit hint count**: Too many suggestions overwhelm users
+4. **Match the domain**: For keywords use identifier patterns, for strings use quoted patterns
+5. **Preserve formatting**: When suggesting strings, keep the quotes
+6. **Consider case sensitivity**: Normalize case if your language is case-insensitive
+
+## Performance Considerations
+
+The Levenshtein distance algorithm has `O(m × n)` time complexity where `m` and `n` are string lengths:
+
+```typescript
+// Fast: Short strings, small list
+const keywords = ["if", "let", "var", "const"];
+generateHints("lt", keywords);  // Very fast
+
+// Slower: Long strings, large list
+const manyLongWords = [...Array(1000)].map((_, i) => 
+  "someVeryLongIdentifierName" + i
+);
+generateHints("someVeryLongIdentifierNam", manyLongWords);  // Slower
+```
+
+**Optimization tips:**
+- Keep expected lists reasonably sized (< 100 items)
+- Use shorter strings when possible
+- Consider filtering by first character before computing distance
+- Cache hints for common typos if performance is critical
+
+## Related
+
+- [Errors](/api/errors) - Core error types
+- [Error Formatter](/api/error-formatter) - Display formatted errors with hints

@@ -1,0 +1,393 @@
+---
+title: "Optimized Combinators"
+description: "Fast-path combinators for performance-critical parsing"
+---
+
+Parserator provides **optimized combinators** that use specialized implementations for common parsing patterns. These combinators can be significantly faster than their generic equivalents, especially for repetitive operations.
+
+## When to Use Optimized Combinators
+
+Optimized combinators are ideal for:
+- **High-frequency operations**: Parsing whitespace, digits, or identifiers that appear many times
+- **Performance-critical parsers**: When parsing speed matters for large inputs
+- **Simple character classes**: When you're matching well-defined character sets
+
+### Performance Comparison
+
+```ts
+// Generic approach (slower)
+const digits = many(digit).map(chars => chars.join(''))
+
+// Optimized approach (faster)
+const digits = manyDigit().map(chars => chars.join(''))
+```
+
+The optimized version uses direct string operations and avoids parser overhead, resulting in better performance for large inputs.
+
+## Character Repetition
+
+### manyChar
+
+Matches zero or more occurrences of a specific character.
+
+```ts
+const manyChar: <T extends string>(ch: T) => Parser<T[]>
+```
+
+<ParamField path="ch" type="string" required>
+  The character to match (must be a single character)
+</ParamField>
+
+**Example:**
+```ts
+const spaces = manyChar(' ')
+spaces.run('    hello') // Right([[' ', ' ', ' ', ' '], {...}])
+spaces.run('hello') // Right([[], {...}])
+```
+
+**Performance**: Optimized for direct character comparison without parser overhead.
+
+### manyDigit
+
+Matches zero or more digit characters (0-9).
+
+```ts
+const manyDigit: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const digits = manyDigit()
+digits.run('12345abc') // Right([['1', '2', '3', '4', '5'], {...}])
+digits.run('abc') // Right([[], {...}])
+```
+
+**Usage:**
+```ts
+// Parse an integer
+const integer = manyDigit().map(digits => parseInt(digits.join(''), 10))
+```
+
+### many1Digit
+
+Matches one or more digit characters (0-9). Fails if no digits are found.
+
+```ts
+const many1Digit: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const digits = many1Digit()
+digits.run('12345abc') // Right([['1', '2', '3', '4', '5'], {...}])
+digits.run('abc') // Left(error: Expected at least one digit)
+```
+
+**Usage:**
+```ts
+// Parse a non-empty number
+const number = many1Digit().map(digits => digits.join(''))
+```
+
+### manyAlphabet
+
+Matches zero or more alphabetic characters (a-z, A-Z).
+
+```ts
+const manyAlphabet: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const letters = manyAlphabet()
+letters.run('Hello123') // Right([['H', 'e', 'l', 'l', 'o'], {...}])
+letters.run('123') // Right([[], {...}])
+```
+
+**Usage:**
+```ts
+// Parse a word
+const word = manyAlphabet().map(chars => chars.join(''))
+```
+
+### many1Alphabet
+
+Matches one or more alphabetic characters (a-z, A-Z). Fails if no letters are found.
+
+```ts
+const many1Alphabet: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const letters = many1Alphabet()
+letters.run('Hello123') // Right([['H', 'e', 'l', 'l', 'o'], {...}])
+letters.run('123') // Left(error: Expected at least one letter)
+```
+
+### manyAlphanumeric
+
+Matches zero or more alphanumeric characters (a-z, A-Z, 0-9).
+
+```ts
+const manyAlphanumeric: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const identifier = manyAlphanumeric()
+identifier.run('var123_') // Right([['v', 'a', 'r', '1', '2', '3'], {...}])
+identifier.run('_') // Right([[], {...}])
+```
+
+**Usage:**
+```ts
+// Parse an identifier (simplified)
+const ident = parser(function* () {
+  const first = yield* alphabet
+  const rest = yield* manyAlphanumeric()
+  return first + rest.join('')
+})
+```
+
+### many1Alphanumeric
+
+Matches one or more alphanumeric characters (a-z, A-Z, 0-9). Fails if none are found.
+
+```ts
+const many1Alphanumeric: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const chars = many1Alphanumeric()
+chars.run('abc123') // Right([['a', 'b', 'c', '1', '2', '3'], {...}])
+chars.run('_') // Left(error: Expected at least one alphanumeric character)
+```
+
+## Whitespace
+
+### manyWhitespace
+
+Matches zero or more whitespace characters (space, tab, newline, carriage return).
+
+```ts
+const manyWhitespace: () => Parser<string[]>
+```
+
+**Example:**
+```ts
+const ws = manyWhitespace()
+ws.run('  \t\nhello') // Right([[' ', ' ', '\t', '\n'], {...}])
+ws.run('hello') // Right([[], {...}])
+```
+
+### skipWhitespace
+
+Skips zero or more whitespace characters without collecting results.
+
+```ts
+const skipWhitespace: () => Parser<void>
+```
+
+**Example:**
+```ts
+const parser = parser(function* () {
+  yield* skipWhitespace()  // Skip leading whitespace
+  const value = yield* number
+  return value
+})
+
+parser.run('   42') // Right([42, {...}])
+```
+
+**Performance**: More efficient than `manyWhitespace()` when you don't need the characters.
+
+## Character Sets
+
+### oneOfChars
+
+Matches any single character from the given set.
+
+```ts
+const oneOfChars: (chars: string) => Parser<string>
+```
+
+<ParamField path="chars" type="string" required>
+  String of characters to match (must be at least one character)
+</ParamField>
+
+**Example:**
+```ts
+const vowel = oneOfChars('aeiouAEIOU')
+vowel.run('apple') // Right(['a', {...}])
+vowel.run('xyz') // Left(error: Expected one of: aeiouAEIOU)
+```
+
+**Usage:**
+```ts
+// Parse hex digit
+const hexDigit = oneOfChars('0123456789abcdefABCDEF')
+```
+
+### anyOfStrings
+
+Matches any of the given strings, trying longest matches first.
+
+```ts
+const anyOfStrings: (...strings: string[]) => Parser<string>
+```
+
+<ParamField path="strings" type="string[]" required>
+  Array of strings to match
+</ParamField>
+
+**Example:**
+```ts
+const operator = anyOfStrings('++', '+', '--', '-')
+operator.run('++x') // Right(['++', {...}])
+operator.run('+x') // Right(['+', {...}])
+```
+
+**Note**: Automatically sorts strings by length (longest first) to ensure correct greedy matching.
+
+## Predicates
+
+### takeWhileChar
+
+Takes characters while a predicate returns true.
+
+```ts
+const takeWhileChar: (predicate: (ch: string) => boolean) => Parser<string>
+```
+
+<ParamField path="predicate" type="(ch: string) => boolean" required>
+  Function that returns true for characters to consume
+</ParamField>
+
+**Example:**
+```ts
+const identifier = takeWhileChar(ch => /[a-zA-Z0-9_]/.test(ch))
+identifier.run('var_name123 = 5') // Right(['var_name123', {...}])
+```
+
+**Usage:**
+```ts
+// Take alphanumeric characters
+const alphanum = takeWhileChar(ch => 
+  (ch >= 'a' && ch <= 'z') || 
+  (ch >= 'A' && ch <= 'Z') || 
+  (ch >= '0' && ch <= '9')
+)
+
+// Take until whitespace
+const word = takeWhileChar(ch => ch !== ' ' && ch !== '\t' && ch !== '\n')
+```
+
+### takeUntilChar
+
+Takes characters until a predicate returns true.
+
+```ts
+const takeUntilChar: (predicate: (ch: string) => boolean) => Parser<string>
+```
+
+<ParamField path="predicate" type="(ch: string) => boolean" required>
+  Function that returns true to stop consuming
+</ParamField>
+
+**Example:**
+```ts
+const untilQuote = takeUntilChar(ch => ch === '"')
+untilQuote.run('hello"world') // Right(['hello', {...}])
+```
+
+**Note**: This is equivalent to `takeWhileChar(ch => !predicate(ch))`.
+
+## Fixed Length
+
+### takeN
+
+Takes exactly n characters from the input.
+
+```ts
+const takeN: (n: number) => Parser<string>
+```
+
+<ParamField path="n" type="number" required>
+  Number of characters to take
+</ParamField>
+
+**Example:**
+```ts
+const threeChars = takeN(3)
+threeChars.run('abcdef') // Right(['abc', {...}])
+threeChars.run('ab') // Left(error: Expected 3 characters but only 2 remaining)
+```
+
+**Usage:**
+```ts
+// Parse a fixed-length code
+const countryCode = takeN(2)  // 'US', 'UK', etc.
+const zipCode = takeN(5)      // '12345'
+```
+
+## Best Practices
+
+### Choose the Right Combinator
+
+```ts
+// ❌ Less efficient
+const spaces = many(char(' '))
+
+// ✅ More efficient
+const spaces = manyChar(' ')
+```
+
+### Combine with Generic Combinators
+
+```ts
+const identifier = parser(function* () {
+  // Optimized for common case
+  const first = yield* alphabet
+  const rest = yield* manyAlphanumeric()
+  
+  // Generic combinators for specific logic
+  yield* optional(char('!'))
+  
+  return first + rest.join('')
+})
+```
+
+### Use Predicates for Flexibility
+
+```ts
+// Custom character class with optimized predicate
+const whitespaceOrComma = takeWhileChar(ch => 
+  ch === ' ' || ch === '\t' || ch === '\n' || ch === ','
+)
+```
+
+## Performance Tips
+
+1. **Use `skipWhitespace()` instead of `manyWhitespace()`** when you don't need the characters
+2. **Prefer `many1Digit()` over `many1(digit)`** for parsing numbers
+3. **Use `takeWhileChar()` with simple predicates** instead of complex parser combinations
+4. **Choose `anyOfStrings()` for keyword matching** instead of multiple `or()` combinators with `string()`
+5. **Use `takeN()` for fixed-length fields** instead of counting with `count()`
+
+## Migration Guide
+
+Replacing generic combinators with optimized versions:
+
+```ts
+// Before
+const digits = many(digit).map(ds => ds.join(''))
+const letters = many1(alphabet).map(ls => ls.join(''))
+const ws = many(or(char(' '), char('\t'), char('\n')))
+
+// After
+const digits = manyDigit().map(ds => ds.join(''))
+const letters = many1Alphabet().map(ls => ls.join(''))
+const ws = manyWhitespace()
+```

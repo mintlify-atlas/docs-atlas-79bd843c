@@ -1,0 +1,441 @@
+---
+title: "Fast-Path Optimization"
+description: "Internal fast-path execution system for high-performance parsing"
+---
+
+# Fast-Path Optimization
+
+<Warning>
+  **Advanced Internal API** - This documentation is for advanced users who need to understand or extend Parserator's internal optimization mechanisms. Most users should not need to interact with this API directly.
+</Warning>
+
+The fast-path optimization system is Parserator's internal mechanism for achieving high performance by avoiding allocations during parsing. Instead of creating immutable state objects on every operation, parsers can opt into a mutable execution model.
+
+## Core Concepts
+
+### FastPathResult Type
+
+Fast-path parsers return either a parsed value or a failure sentinel:
+
+```typescript
+type FastPathResult<T> = T | typeof PARSE_FAILED;
+```
+
+**Key Points:**
+- Returns the parsed value `T` on success
+- Returns `PARSE_FAILED` symbol on failure
+- Avoids allocating `Either` objects on every operation
+- Dramatically reduces garbage collection pressure
+
+### PARSE_FAILED Sentinel
+
+A unique symbol used to indicate parse failure without allocation:
+
+```typescript
+const PARSE_FAILED = Symbol("PARSE_FAILED");
+```
+
+**Why a Symbol?**
+- Distinguishes failure from any valid parse result
+- Cannot conflict with user values (including `null`, `undefined`, `false`)
+- Zero allocation cost
+- Type-safe with TypeScript
+
+## MutableParserContext
+
+The mutable context is the heart of the fast-path system. Instead of creating new immutable state objects, parsers mutate this context in-place.
+
+### Constructor
+
+```typescript
+new MutableParserContext(source: string)
+```
+
+Creates a new parser context for the given input string.
+
+### Properties
+
+#### Source and Position
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `source` | `string` | The complete original input string |
+| `offset` | `number` | Current byte offset from start (0-indexed) |
+| `line` | `number` | Current line number (1-indexed, computed lazily) |
+| `column` | `number` | Current column number (1-indexed, computed lazily) |
+
+#### Parse State
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `committed` | `boolean` | Whether the parser has committed (affects backtracking) |
+| `labelStack` | `string[]` | Stack of context labels for error reporting |
+
+#### Error Tracking
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `error` | `ParseError \| null` | The furthest error encountered |
+| `errorOffset` | `number` | Offset where the error occurred |
+| `expectMessage` | `string \| null` | Custom error message from `.expect()` |
+
+### Methods
+
+#### Input Inspection
+
+##### `charAt(): string`
+
+Gets the character at the current offset without allocating.
+
+```typescript
+const char = ctx.charAt();
+if (char === '{') {
+  // Parse object
+}
+```
+
+**Performance:** O(1), zero allocation
+
+##### `startsWith(str: string): boolean`
+
+Checks if remaining input starts with the given string.
+
+```typescript
+if (ctx.startsWith('true')) {
+  ctx.advance(4);
+  return true;
+}
+```
+
+**Performance:** O(n) where n is the length of `str`
+
+##### `remaining(): string`
+
+Gets the remaining unparsed portion of the input.
+
+```typescript
+const rest = ctx.remaining();
+```
+
+<Warning>
+  **Allocates a new string** - Prefer `charAt()` or `startsWith()` for better performance.
+</Warning>
+
+##### `isAtEnd(): boolean`
+
+Checks if at end of input.
+
+```typescript
+if (ctx.isAtEnd()) {
+  return PARSE_FAILED;
+}
+```
+
+#### Position Management
+
+##### `advance(n: number): void`
+
+Advances the offset by `n` characters. Does NOT update line/column (computed lazily on error).
+
+```typescript
+ctx.advance(5); // Move forward 5 characters
+```
+
+##### `computePosition(): void`
+
+Computes the actual line and column for the current offset.
+
+<Warning>
+  **Expensive operation** - O(offset) complexity. Only call when creating errors.
+</Warning>
+
+```typescript
+ctx.computePosition();
+console.log(`Error at line ${ctx.line}, column ${ctx.column}`);
+```
+
+#### Error Recording
+
+##### `recordError(error: ParseError): void`
+
+Records an error if it's further than any previous error. Implements "furthest failure" error reporting.
+
+```typescript
+ctx.recordError({
+  type: 'expected',
+  expected: 'digit',
+  span: ctx.span(1)
+});
+```
+
+##### `recordExpect(message: string): void`
+
+Records an expect message at the current offset.
+
+```typescript
+ctx.recordExpect('Expected opening brace');
+```
+
+#### Backtracking
+
+##### `snapshot(): ContextSnapshot`
+
+Creates a snapshot of the current context state for backtracking.
+
+```typescript
+const snapshot = ctx.snapshot();
+// Try parsing something
+if (failed) {
+  ctx.restore(snapshot); // Backtrack
+}
+```
+
+##### `restore(snapshot: ContextSnapshot): void`
+
+Restores context to a previous snapshot.
+
+```typescript
+ctx.restore(snapshot);
+```
+
+**ContextSnapshot Type:**
+```typescript
+type ContextSnapshot = {
+  offset: number;
+  line: number;
+  column: number;
+  committed: boolean;
+  labelStackLength: number;
+  error: ParseError | null;
+  errorOffset: number;
+  expectMessage: string | null;
+};
+```
+
+#### Utilities
+
+##### `span(length?: number): Span`
+
+Creates a span at the current position.
+
+```typescript
+const span = ctx.span(5); // Span covering next 5 characters
+```
+
+##### `toErrorBundle(): ParseErrorBundle`
+
+Converts the current error to a ParseErrorBundle. Computes line/column if not already computed.
+
+```typescript
+if (ctx.error) {
+  return ctx.toErrorBundle();
+}
+```
+
+## FastPathParser Interface
+
+Parsers implement this interface to opt into fast-path execution:
+
+```typescript
+interface FastPathParser<T> {
+  runFast(ctx: MutableParserContext): FastPathResult<T>;
+}
+```
+
+### Implementing Fast-Path Parsers
+
+```typescript
+class StringParser implements FastPathParser<string> {
+  constructor(private expected: string) {}
+
+  runFast(ctx: MutableParserContext): FastPathResult<string> {
+    if (ctx.startsWith(this.expected)) {
+      ctx.advance(this.expected.length);
+      return this.expected;
+    }
+    
+    ctx.recordError({
+      type: 'expected',
+      expected: this.expected,
+      span: ctx.span()
+    });
+    return PARSE_FAILED;
+  }
+}
+```
+
+### Type Guard
+
+Check if a parser supports fast-path execution:
+
+```typescript
+function isFastPathParser<T>(parser: any): parser is FastPathParser<T>
+```
+
+**Usage:**
+```typescript
+if (isFastPathParser(parser)) {
+  const ctx = new MutableParserContext(input);
+  const result = parser.runFast(ctx);
+  
+  if (result === PARSE_FAILED) {
+    // Handle error
+  } else {
+    // Use result
+  }
+}
+```
+
+## Context Pool
+
+Parserator includes an internal context pool to reuse `MutableParserContext` instances:
+
+```typescript
+const contextPool = new ContextPool();
+```
+
+### Methods
+
+#### `acquire(source: string): MutableParserContext`
+
+Gets a context from the pool or creates a new one.
+
+```typescript
+const ctx = contextPool.acquire(input);
+```
+
+#### `release(ctx: MutableParserContext): void`
+
+Returns a context to the pool for reuse (if pool not full).
+
+```typescript
+contextPool.release(ctx);
+```
+
+#### `clear(): void`
+
+Clears all pooled contexts.
+
+```typescript
+contextPool.clear();
+```
+
+**Pool Configuration:**
+- Maximum pool size: 100 contexts
+- Automatically resets context state on acquire
+- Thread-safe for single-threaded JavaScript execution
+
+## When Parsers Use Fast Paths
+
+Parserator automatically uses fast-path execution when:
+
+1. **Parser implements FastPathParser** - The parser has a `runFast()` method
+2. **No debugging enabled** - Fast-path skipped in debug mode for better error messages
+3. **Normal execution mode** - Not in error recovery or special modes
+
+**Example: Built-in parsers using fast-path:**
+- `string()` - String matching
+- `regex()` - Regular expression matching  
+- `char()` - Single character matching
+- `map()` - Result transformation
+- `seq()` - Sequential composition
+- `alt()` - Alternative parsers
+
+## Performance Characteristics
+
+### Memory
+
+| Approach | Allocation per Parse Operation |
+|----------|-------------------------------|
+| Traditional (immutable) | 1-3 objects (state + Either) |
+| Fast-path (mutable) | 0 objects in success path |
+
+### Speed
+
+Fast-path execution is typically **2-5x faster** than traditional immutable parsing for:
+- Simple parsers (string, char, regex)
+- Sequential compositions with few branches
+- Successful parses with minimal backtracking
+
+Trade-offs:
+- Slightly more complex implementation
+- Mutable state requires careful handling
+- Error messages computed lazily (only when needed)
+
+## Best Practices
+
+### For Library Users
+
+<Warning>
+  You typically don't need to use the fast-path API directly. Parserator handles this automatically.
+</Warning>
+
+### For Parser Implementers
+
+1. **Implement runFast() for hot paths** - Add fast-path support to parsers used in tight loops
+2. **Avoid allocations in runFast()** - Use `charAt()` and `startsWith()` instead of `remaining()`
+3. **Record errors properly** - Always call `recordError()` on failure
+4. **Handle backtracking** - Use `snapshot()` and `restore()` for alternatives
+5. **Test both paths** - Ensure traditional and fast-path execution produce identical results
+
+### Example: Optimized Parser
+
+```typescript
+class WhitespaceParser implements FastPathParser<string> {
+  runFast(ctx: MutableParserContext): FastPathResult<string> {
+    const start = ctx.offset;
+    
+    // Fast path: skip whitespace without allocation
+    while (!ctx.isAtEnd()) {
+      const char = ctx.charAt();
+      if (char !== ' ' && char !== '\t' && char !== '\n' && char !== '\r') {
+        break;
+      }
+      ctx.advance(1);
+    }
+    
+    const length = ctx.offset - start;
+    if (length === 0) {
+      ctx.recordExpect('whitespace');
+      return PARSE_FAILED;
+    }
+    
+    // Only allocate result string on success
+    return ctx.source.slice(start, ctx.offset);
+  }
+}
+```
+
+## Debugging Fast-Path Code
+
+Since line/column computation is lazy, debugging can be tricky. Use these techniques:
+
+### Force Position Computation
+
+```typescript
+ctx.computePosition();
+console.log(`At line ${ctx.line}, column ${ctx.column}`);
+```
+
+### Add Checkpoints
+
+```typescript
+const snapshot = ctx.snapshot();
+console.log('Snapshot:', snapshot);
+```
+
+### Disable Fast-Path Temporarily
+
+To compare behavior, implement both traditional and fast-path execution, then test with fast-path disabled.
+
+## Related APIs
+
+- [Error Handling](/api/errors) - ParseError and error reporting
+- [Core Types](/api/types) - Parser and ParserContext types
+- [Parser Combinators](/api/combinators) - Built-in parser implementations
+
+---
+
+<Info>
+  The fast-path optimization system is transparent to library users but critical for achieving Parserator's high performance. Understanding it helps when debugging complex parsers or contributing to the library.
+</Info>

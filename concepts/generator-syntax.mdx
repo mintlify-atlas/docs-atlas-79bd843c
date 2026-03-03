@@ -1,0 +1,227 @@
+---
+title: Generator Syntax
+description: Using generator functions for sequential parsing with yield*
+---
+
+## What is Generator Syntax?
+
+Generator syntax provides an imperative-style way to write parsers using JavaScript/TypeScript generator functions. Instead of chaining methods, you use `yield*` to sequence parsers, making complex parsing logic more readable.
+
+## The parser() Function
+
+The `parser()` function (alias: `Parser.gen()`) creates a parser from a generator function:
+
+```typescript
+const parser: <T>(f: () => Generator<Parser<any>, T, any>) => Parser<T>
+```
+
+## Basic Usage
+
+### Simple Sequential Parsing
+
+```typescript
+import { parser, char, identifier, number } from 'parserator';
+
+const keyValue = parser(function* () {
+  const key = yield* identifier();
+  yield* char(':');
+  const value = yield* number();
+  return { key, value };
+});
+
+keyValue.parse("age:30"); // { key: "age", value: 30 }
+```
+
+### Discarding Results
+
+Use `yield*` without assignment when you need to match something but don't need its value:
+
+```typescript
+const email = parser(function* () {
+  const username = yield* many1(or(alphabet, digit, char(".")));
+  yield* char("@");  // Required but value discarded
+  const domain = yield* many1(or(alphabet, digit)).map(chars => chars.join(""));
+  yield* char(".");  // Required but value discarded
+  const tld = yield* many1(alphabet).map(chars => chars.join(""));
+  
+  return { 
+    username: username.join(""), 
+    domain: domain + "." + tld 
+  };
+});
+```
+
+## vs Method Chaining
+
+The same parser can be written using method chaining or generator syntax:
+
+### Method Chaining
+
+```typescript
+const coordinate = number()
+  .zip(char(',').then(number()))
+  .map(([x, y]) => ({ x, y }));
+```
+
+### Generator Syntax
+
+```typescript
+const coordinate = parser(function* () {
+  const x = yield* number();
+  yield* char(',');
+  const y = yield* number();
+  return { x, y };
+});
+```
+
+## Conditional Parsing
+
+Generator syntax makes conditional logic natural:
+
+```typescript
+const value = parser(function* () {
+  const first = yield* or(
+    string("true").map(() => "bool" as const),
+    string("null").map(() => "null" as const),
+    char('"').map(() => "string" as const),
+    char('[').map(() => "array" as const),
+    char('{').map(() => "object" as const),
+    regex(/-?[0-9]/).map(() => "number" as const)
+  );
+  
+  switch (first) {
+    case "bool":
+      return yield* or(
+        string("true").map(() => true),
+        string("false").map(() => false)
+      );
+    case "null":
+      return null;
+    case "string":
+      return yield* jsonString;
+    case "array":
+      return yield* jsonArray;
+    case "object":
+      return yield* jsonObject;
+    case "number":
+      return yield* jsonNumber;
+  }
+});
+```
+
+## Loops
+
+You can use regular loops to repeatedly parse:
+
+```typescript
+const jsonString = parser(function* () {
+  yield* char('"');
+  const chars: string[] = [];
+  
+  while (true) {
+    const next = yield* or(
+      string('\\"').map(() => '"'),
+      string('\\\\').map(() => '\\'),
+      regex(/[^"\\]+/),
+      char('"').map(() => null)  // End marker
+    );
+    
+    if (next === null) break;
+    chars.push(next);
+  }
+  
+  return chars.join("");
+});
+```
+
+## Error Propagation
+
+Errors automatically propagate through generator syntax:
+
+```typescript
+const ifStatement = parser(function* () {
+  yield* keyword("if");
+  yield* char('(').expect("opening parenthesis");  // Error if missing
+  const condition = yield* expression;  // Won't run if previous failed
+  yield* char(')').expect("closing parenthesis");
+  const body = yield* block;
+  return { type: "if", condition, body };
+});
+```
+
+If any `yield*` expression fails, the entire parser fails immediately and subsequent yields are not executed.
+
+## Committing in Generators
+
+Use `commit()` to prevent backtracking after identifying the construct:
+
+```typescript
+import { parser, commit, keyword, char } from 'parserator';
+
+const ifStatement = parser(function* () {
+  yield* keyword("if");
+  yield* commit();  // No backtracking after this point
+  yield* char('(').expect("opening parenthesis after 'if'");
+  const condition = yield* expression;
+  yield* char(')').expect("closing parenthesis");
+  const body = yield* block;
+  return { type: "if", condition, body };
+});
+```
+
+## Real-World Example: JSON Parser
+
+Here's a complete JSON object parser using generator syntax:
+
+```typescript
+import { parser, char, string, sepBy, token } from 'parserator';
+
+const jsonObject: Parser<Record<string, any>> = parser(function* () {
+  yield* token(char("{"));
+  
+  const pairs = yield* sepBy(
+    parser(function* () {
+      const key = yield* token(jsonString);
+      yield* token(char(":")); 
+      const value = yield* token(jsonValue);
+      return [key, value] as const;
+    }),
+    token(char(","))
+  );
+  
+  yield* token(char("}"));
+  
+  return Object.fromEntries(pairs);
+});
+```
+
+## When to Use Generator Syntax
+
+Use generator syntax when:
+- You have sequential parsing with multiple intermediate values
+- Your parsing logic involves conditionals or loops
+- You find imperative code more readable than method chains
+- You need to perform transformations on intermediate results
+
+Use method chaining when:
+- You're building simple linear parsers
+- You want to emphasize the functional composition
+- The parser is short and straightforward
+
+## Type Safety
+
+Generator syntax is fully type-safe. TypeScript infers the return type automatically:
+
+```typescript
+const parser = parser(function* () {
+  const name = yield* identifier();  // string
+  yield* char(':');
+  const age = yield* number();       // number
+  return { name, age };  // Inferred as { name: string, age: number }
+});
+// parser has type Parser<{ name: string, age: number }>
+```
+
+## Performance
+
+Generator syntax has no performance penalty compared to method chaining. Both compile to the same underlying parser operations.

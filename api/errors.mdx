@@ -1,0 +1,288 @@
+---
+title: "Errors"
+description: "Core error types and error handling structures in Parserator"
+---
+
+## Overview
+
+Parserator provides a rich error handling system with detailed location information, context tracking, and support for multiple error formats. The error system is built around three main types:
+
+- **ParseError**: Union type representing different kinds of parsing errors
+- **ParseErrorBundle**: Collection of errors with formatting capabilities
+- **Span**: Location information for errors in source code
+
+## Span
+
+Represents a location span in source code with position and size information.
+
+```typescript
+type Span = {
+  offset: number;  // Byte offset from the start of the source
+  length: number;  // Length of the span in bytes
+  line: number;    // Line number (1-indexed)
+  column: number;  // Column number (1-indexed)
+};
+```
+
+### Creating Spans
+
+Use the `Span()` factory function to create spans from parser state:
+
+```typescript
+const span = Span(state, 5);
+// Returns: { offset: 10, length: 5, line: 2, column: 3 }
+```
+
+The function automatically computes accurate line/column positions if the state contains source information.
+
+## ParseError Types
+
+Parserator defines four types of errors, each with a discriminant `tag` field for pattern matching:
+
+### Expected Error
+
+Used when specific tokens or constructs were expected but not found.
+
+```typescript
+type ExpectedParseError = {
+  tag: "Expected";
+  span: Span;           // Location of the error
+  items: string[];      // List of expected items
+  context: string[];    // Parser context stack
+  found?: string;       // What was actually found (optional)
+};
+```
+
+**Example:**
+```typescript
+const error = ParseError.expected({
+  span: Span(state),
+  items: ["identifier", "keyword"],
+  context: ["function declaration"],
+  found: "number"
+});
+```
+
+### Unexpected Error
+
+Used when an unexpected token is encountered.
+
+```typescript
+type UnexpectedParseError = {
+  tag: "Unexpected";
+  span: Span;           // Location of the error
+  found: string;        // What was found
+  context: string[];    // Parser context stack
+  hints?: string[];     // Suggestions for typos (optional)
+};
+```
+
+**Example:**
+```typescript
+const error = ParseError.unexpected({
+  span: Span(state, 5),
+  found: "lamdba",
+  context: ["expression"],
+  hints: ["lambda"]  // Typo suggestion
+});
+```
+
+### Custom Error
+
+Used for custom error messages specific to your parser.
+
+```typescript
+type CustomParseError = {
+  tag: "Custom";
+  span: Span;           // Location of the error
+  message: string;      // Custom error message
+  hints?: string[];     // Optional suggestions
+  context: string[];    // Parser context stack
+};
+```
+
+**Example:**
+```typescript
+const error = ParseError.custom({
+  span: Span(state),
+  message: "Invalid syntax in expression",
+  context: ["expression"],
+  hints: ["Try using parentheses"]
+});
+```
+
+### Fatal Error
+
+Used for unrecoverable errors that should stop parsing immediately.
+
+```typescript
+type FatalParseError = {
+  tag: "Fatal";
+  span: Span;           // Location of the error
+  message: string;      // Fatal error message
+  context: string[];    // Parser context stack
+};
+```
+
+**Example:**
+```typescript
+const error = ParseError.fatal({
+  span: Span(state),
+  message: "Maximum recursion depth exceeded",
+  context: ["nested expression"]
+});
+```
+
+## ParseError Union Type
+
+The `ParseError` type is a discriminated union of all error types:
+
+```typescript
+type ParseError =
+  | CustomParseError
+  | ExpectedParseError
+  | UnexpectedParseError
+  | FatalParseError;
+```
+
+### Pattern Matching
+
+Use the `tag` field to handle different error types:
+
+```typescript
+function handleError(error: ParseError) {
+  switch (error.tag) {
+    case "Expected":
+      console.log(`Expected ${error.items.join(" or ")}`);
+      break;
+    case "Unexpected":
+      console.log(`Unexpected ${error.found}`);
+      if (error.hints) {
+        console.log(`Did you mean: ${error.hints.join(", ")}?`);
+      }
+      break;
+    case "Custom":
+      console.log(error.message);
+      break;
+    case "Fatal":
+      console.log(`Fatal: ${error.message}`);
+      break;
+  }
+}
+```
+
+## ParseErrorBundle
+
+A collection of parsing errors with formatting and analysis capabilities.
+
+```typescript
+class ParseErrorBundle {
+  constructor(
+    public errors: ParseError[],
+    public source: string
+  )
+
+  // Get the primary error (furthest in the input)
+  get primary(): ParseError
+
+  // Get all errors at the same position as primary
+  get primaryErrors(): ParseError[]
+
+  // Simple string representation
+  toString(): string
+
+  // Formatted output
+  format(format?: "plain" | "ansi" | "html" | "json"): string
+}
+```
+
+### Creating Error Bundles
+
+```typescript
+const errors = [
+  ParseError.expected({ 
+    span: spanAt10, 
+    items: ["("], 
+    context: [] 
+  }),
+  ParseError.unexpected({ 
+    span: spanAt15, 
+    found: ")", 
+    context: [] 
+  })
+];
+
+const bundle = new ParseErrorBundle(errors, sourceCode);
+```
+
+### Primary Error
+
+The error bundle automatically identifies the "primary" error - the one that occurred furthest in the input. This is typically the most relevant error to show users.
+
+```typescript
+const primary = bundle.primary;
+console.log(`Error at offset ${primary.span.offset}`);
+```
+
+### Primary Errors
+
+Get all errors that occurred at the same position as the primary error:
+
+```typescript
+const primaryErrors = bundle.primaryErrors;
+// Useful when multiple parse attempts failed at the same location
+```
+
+### String Representation
+
+```typescript
+console.log(bundle.toString());
+// Output: "Expected ( or [, found )"
+```
+
+### Formatted Output
+
+See [Error Formatter](/api/error-formatter) for detailed formatting options:
+
+```typescript
+// Plain text
+console.log(bundle.format("plain"));
+
+// ANSI colors for terminal
+console.log(bundle.format("ansi"));
+
+// HTML output
+const html = bundle.format("html");
+
+// JSON for programmatic consumption
+const json = bundle.format("json");
+```
+
+## Error Context
+
+All error types include a `context` field that tracks the parser state stack. This helps users understand where in the parsing process the error occurred:
+
+```typescript
+const error = ParseError.expected({
+  span: Span(state),
+  items: ["identifier"],
+  context: ["function declaration", "parameter list"],
+  found: "}"
+});
+
+// Will display: Context: function declaration > parameter list
+```
+
+## Best Practices
+
+1. **Use Expected errors** for missing required elements
+2. **Use Unexpected errors** for invalid tokens (especially with hints for typos)
+3. **Use Custom errors** for domain-specific validation failures
+4. **Use Fatal errors** only for unrecoverable situations
+5. **Always include context** to help users locate errors in complex grammars
+6. **Add hints** when you can detect common typos or mistakes
+
+## Related
+
+- [Error Formatter](/api/error-formatter) - Format errors for display
+- [Hints](/api/hints) - Generate typo suggestions

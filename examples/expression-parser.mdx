@@ -1,0 +1,427 @@
+---
+title: "Expression Parser"
+description: "Parse and evaluate mathematical expressions with operator precedence"
+---
+
+# Expression Parser
+
+This example demonstrates building a JavaScript expression parser that handles operators, function calls, member access, and various literal types. While not handling full operator precedence in this simplified version, it shows the structure needed for a real-world expression parser.
+
+## Features
+
+The parser supports:
+- **Literals**: Numbers, strings, booleans, null
+- **Operators**: Binary (`+`, `-`, `*`, `/`, `==`, etc.) and unary (`!`, `-`)
+- **Function calls**: `fn(arg1, arg2)`
+- **Member access**: `obj.property`
+- **Objects**: `{ key: value, shorthand }`
+- **Arrays**: `[1, 2, 3]`
+
+## AST Type Definitions
+
+```typescript
+type Expression =
+  | { type: "identifier"; name: string }
+  | { type: "literal"; value: any }
+  | { type: "binary"; left: Expression; op: string; right: Expression }
+  | { type: "unary"; op: string; arg: Expression }
+  | { type: "call"; callee: Expression; args: Expression[] }
+  | { type: "member"; object: Expression; property: string }
+  | { type: "function"; params: string[]; body: Statement[] }
+  | { type: "object"; properties: Array<{ key: string; value: Expression }> }
+  | { type: "array"; elements: Expression[] };
+```
+
+## Lexical Elements
+
+```typescript
+import {
+  atomic,
+  between,
+  char,
+  commit,
+  optional,
+  or,
+  parser,
+  Parser,
+  regex,
+  sepBy,
+  skipMany0,
+  string
+} from "parserator";
+
+const whitespace = regex(/\s+/).label("whitespace");
+const lineComment = regex(/\/\/[^\n]*/).label("line comment");
+const blockComment = regex(/\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//).label(
+  "block comment"
+);
+const space = or(whitespace, lineComment, blockComment);
+const spaces = skipMany0(space);
+
+function token<T>(parser: Parser<T>): Parser<T> {
+  return parser.trimLeft(spaces);
+}
+
+// Keywords
+const keywords = [
+  "let", "const", "function", "if", "else", "return", "true", "false", "null"
+];
+
+const keyword = (k: string) =>
+  token(string(k).thenDiscard(regex(/(?![a-zA-Z0-9_])/))).commit();
+
+const identifier = token(
+  regex(/[a-zA-Z_][a-zA-Z0-9_]*/)
+    .label("identifier")
+    .flatMap(name =>
+      keywords.includes(name) ?
+        Parser.fatal(
+          `'${name}' is a reserved keyword and cannot be used as an identifier`
+        )
+      : Parser.lift(name)
+    )
+);
+```
+
+## Literal Parsers
+
+```typescript
+// Number literals
+const numberLiteral = token(
+  regex(/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+    .map(Number)
+    .label("number")
+);
+
+// String literals (double or single quotes)
+const stringLiteral = token(
+  or(
+    between(char('"'), char('"'), regex(/[^"]*/)),
+    between(char("'"), char("'"), regex(/[^']*/))
+  ).label("string")
+);
+
+// Boolean literals
+const booleanLiteral = token(
+  or(
+    keyword("true").map(() => true),
+    keyword("false").map(() => false)
+  )
+).label("boolean");
+
+// Null literal
+const nullLiteral = token(keyword("null").map(() => null)).label("null");
+```
+
+## Primary Expressions
+
+```typescript
+let expression: Parser<Expression>;
+
+const primaryExpression: Parser<Expression> = or(
+  // Literals
+  numberLiteral.map(value => ({ type: "literal" as const, value })),
+  stringLiteral.map(value => ({ type: "literal" as const, value })),
+  booleanLiteral.map(value => ({ type: "literal" as const, value })),
+  nullLiteral.map(value => ({ type: "literal" as const, value })),
+
+  // Identifier
+  identifier.map(name => ({ type: "identifier" as const, name })),
+
+  // Object literal
+  atomic(
+    parser(function* () {
+      yield* token(char("{"));
+      yield* commit();
+      const properties = yield* sepBy(
+        parser(function* () {
+          const key = yield* or(identifier, stringLiteral).expect(
+            "property key"
+          );
+          const hasColon = yield* optional(token(char(":")));
+
+          let value: Expression;
+          if (hasColon) {
+            value = yield* Parser.lazy(() => expression).expect(
+              "property value"
+            );
+          } else {
+            // Shorthand property: { x } means { x: x }
+            if (typeof key !== "string") {
+              return yield* Parser.fatal(
+                "Shorthand properties must use identifiers"
+              );
+            }
+            value = { type: "identifier" as const, name: key };
+          }
+
+          return { key, value };
+        }),
+        token(char(","))
+      );
+      yield* token(char("}")).expect("closing brace for object");
+      return { type: "object" as const, properties };
+    })
+  ),
+
+  // Array literal
+  atomic(
+    parser(function* () {
+      yield* token(char("["));
+      yield* commit();
+      const elements = yield* sepBy(
+        Parser.lazy(() => expression),
+        token(char(","))
+      );
+      yield* token(char("]")).expect("closing bracket for array");
+      return { type: "array" as const, elements };
+    })
+  ),
+
+  // Parenthesized expression
+  between(
+    token(char("(")),
+    token(char(")")),
+    Parser.lazy(() => expression)
+  )
+);
+```
+
+## Postfix Expressions
+
+Handle function calls and member access:
+
+```typescript
+const postfixExpression: Parser<Expression> = parser(function* () {
+  let expr = yield* primaryExpression;
+
+  while (true) {
+    const next = yield* optional(
+      or(
+        // Function call: fn(...)
+        atomic(
+          parser(function* () {
+            yield* token(char("("));
+            const args = yield* sepBy(
+              Parser.lazy(() => expression),
+              token(char(","))
+            );
+            yield* token(char(")")).expect(
+              "closing parenthesis for function call"
+            );
+            return { type: "call" as const, args };
+          })
+        ),
+        // Member access: obj.prop
+        atomic(
+          parser(function* () {
+            yield* token(char("."));
+            const property = yield* identifier.expect(
+              "property name after '.'"
+            );
+            return { type: "member" as const, property };
+          })
+        )
+      )
+    );
+
+    if (!next) break;
+
+    if (next.type === "call") {
+      expr = { type: "call", callee: expr, args: next.args };
+    } else {
+      expr = { type: "member", object: expr, property: next.property };
+    }
+  }
+
+  return expr;
+});
+```
+
+## Unary and Binary Operators
+
+```typescript
+// Unary operators: !, -, +
+const unaryOp = token(or(string("!"), string("-"), string("+")));
+
+const unaryExpression: Parser<Expression> = or(
+  parser(function* () {
+    const op = yield* unaryOp;
+    const arg = yield* unaryExpression;
+    return { type: "unary" as const, op, arg };
+  }),
+  postfixExpression
+);
+
+// Binary operators
+const binaryOp = token(
+  or(
+    string("==="), string("!=="), string("=="), string("!="),
+    string("<="), string(">="), string("<"), string(">"),
+    string("&&"), string("||"),
+    string("+"), string("-"), string("*"), string("/"), string("%")
+  )
+);
+
+const binaryExpression: Parser<Expression> = parser(function* () {
+  const left = yield* unaryExpression;
+  const rest = yield* optional(
+    parser(function* () {
+      const op = yield* binaryOp;
+      const right = yield* binaryExpression;
+      return { op, right };
+    })
+  );
+
+  if (rest) {
+    return { type: "binary" as const, left, op: rest.op, right: rest.right };
+  }
+  return left;
+});
+
+expression = binaryExpression;
+```
+
+## Usage Examples
+
+### Simple Expressions
+
+```typescript
+expression.parseOrThrow("42");
+// { type: "literal", value: 42 }
+
+expression.parseOrThrow("x + y");
+// {
+//   type: "binary",
+//   left: { type: "identifier", name: "x" },
+//   op: "+",
+//   right: { type: "identifier", name: "y" }
+// }
+```
+
+### Function Calls
+
+```typescript
+expression.parseOrThrow("fn(1, 2, 3)");
+// {
+//   type: "call",
+//   callee: { type: "identifier", name: "fn" },
+//   args: [
+//     { type: "literal", value: 1 },
+//     { type: "literal", value: 2 },
+//     { type: "literal", value: 3 }
+//   ]
+// }
+```
+
+### Member Access
+
+```typescript
+expression.parseOrThrow("obj.prop.method()");
+// {
+//   type: "call",
+//   callee: {
+//     type: "member",
+//     object: {
+//       type: "member",
+//       object: { type: "identifier", name: "obj" },
+//       property: "prop"
+//     },
+//     property: "method"
+//   },
+//   args: []
+// }
+```
+
+### Object Literals
+
+```typescript
+expression.parseOrThrow('{ name: "Alice", age: 30 }');
+// {
+//   type: "object",
+//   properties: [
+//     { key: "name", value: { type: "literal", value: "Alice" } },
+//     { key: "age", value: { type: "literal", value: 30 } }
+//   ]
+// }
+
+// Shorthand properties
+expression.parseOrThrow("{ x, y }");
+// {
+//   type: "object",
+//   properties: [
+//     { key: "x", value: { type: "identifier", name: "x" } },
+//     { key: "y", value: { type: "identifier", name: "y" } }
+//   ]
+// }
+```
+
+### Complex Expressions
+
+```typescript
+expression.parseOrThrow("fn(x + 1, y * 2)");
+// {
+//   type: "call",
+//   callee: { type: "identifier", name: "fn" },
+//   args: [
+//     {
+//       type: "binary",
+//       left: { type: "identifier", name: "x" },
+//       op: "+",
+//       right: { type: "literal", value: 1 }
+//     },
+//     {
+//       type: "binary",
+//       left: { type: "identifier", name: "y" },
+//       op: "*",
+//       right: { type: "literal", value: 2 }
+//     }
+//   ]
+// }
+```
+
+## Operator Precedence
+
+The simplified parser in this example uses **right-associative** binary operators without proper precedence. For a production parser, you would implement precedence climbing or use a Pratt parser approach:
+
+```typescript
+// Precedence levels (higher = tighter binding)
+const precedence: Record<string, number> = {
+  "*": 5, "/": 5, "%": 5,
+  "+": 4, "-": 4,
+  "<": 3, ">": 3, "<=": 3, ">=": 3,
+  "==": 2, "!=": 2, "===": 2, "!==": 2,
+  "&&": 1,
+  "||": 0
+};
+
+// Implement precedence climbing
+function parseBinaryExpr(minPrec: number): Parser<Expression> {
+  return parser(function* () {
+    let left = yield* unaryExpression;
+
+    while (true) {
+      const op = yield* optional(binaryOp);
+      if (!op || (precedence[op] ?? -1) < minPrec) {
+        // Put back the operator if precedence too low
+        break;
+      }
+
+      const prec = precedence[op];
+      const right = yield* parseBinaryExpr(prec + 1);
+      left = { type: "binary", left, op, right };
+    }
+
+    return left;
+  });
+}
+```
+
+## Key Takeaways
+
+1. **Recursive descent**: Build complex parsers from simple building blocks
+2. **Postfix operations**: Use loops to handle chained calls and member access
+3. **Lazy evaluation**: Use `Parser.lazy()` for recursive grammar rules
+4. **Operator precedence**: Implement proper precedence for production parsers
+5. **Error handling**: Use `commit()` after distinctive tokens for better errors
+6. **AST structure**: Design AST types that are easy to traverse and transform

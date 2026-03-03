@@ -1,0 +1,133 @@
+---
+title: Introduction
+description: Type-safe parser combinators for TypeScript with elegant generator syntax
+---
+
+# Introduction
+
+Parserator is a parser combinator library for TypeScript that lets you build complex parsers by composing small, reusable functions. Write parsers that feel like the grammar they implement, with full type inference and zero dependencies.
+
+```typescript
+import { parser, char, many1, digit } from "parserator";
+
+const number = many1(digit).map(d => parseInt(d.join("")));
+
+const point = parser(function* () {
+  yield* char("(");
+  const x = yield* number;
+  yield* char(",");
+  const y = yield* number;
+  yield* char(")");
+  return { x, y };
+});
+
+point.parseOrThrow("(10,20)"); // { x: 10, y: 20 }
+```
+
+## Why parser combinators?
+
+Parser combinators offer a sweet spot between regex and parser generators:
+
+<CardGroup cols={3}>
+  <Card title="vs Regex" icon="code">
+    Regex works for simple patterns but becomes unreadable for nested structures. Parser combinators handle recursion, context, and complex grammars naturally.
+  </Card>
+  
+  <Card title="vs Parser generators" icon="wrench">
+    Tools like ANTLR require separate grammar files and build steps. Parser combinators are just TypeScript—no tooling needed.
+  </Card>
+  
+  <Card title="vs Hand-written" icon="hand">
+    Hand-written parsers give you control but are tedious and error-prone. Combinators give you the same power with less code.
+  </Card>
+</CardGroup>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Generator syntax" icon="asterisk" href="/concepts/generator-syntax">
+    Use `function*` and `yield*` to write parsers that mirror your grammar structure. No callback hell, no deeply nested code.
+  </Card>
+  
+  <Card title="Full type inference" icon="check" href="/api/parser">
+    TypeScript infers types throughout your parser chain. Get autocomplete and type safety for free.
+  </Card>
+  
+  <Card title="Rich error messages" icon="bug" href="/concepts/error-handling">
+    Get detailed error messages with source snippets, position tracking, and typo suggestions via Levenshtein distance.
+  </Card>
+  
+  <Card title="Commit/backtracking" icon="shuffle" href="/concepts/error-handling">
+    Control when the parser commits to a path. Better error messages instead of generic "expected one of..." failures.
+  </Card>
+  
+  <Card title="Zero dependencies" icon="cube">
+    No external dependencies. Just TypeScript and your code.
+  </Card>
+  
+  <Card title="Performance optimized" icon="bolt" href="/guides/performance">
+    Fast-path optimizations for common patterns. Use `manyDigit()` instead of `many(digit)` for hot paths.
+  </Card>
+</CardGroup>
+
+## How it works
+
+Small parsers combine into complex ones:
+
+```typescript
+// A parser for a single digit
+const digit = parser(/* ... */);
+
+// Combine with many1 to get one or more digits
+const digits = many1(digit);
+
+// Transform the array of digits into a number
+const number = digits.map(d => parseInt(d.join("")));
+
+// Compose parsers with generator syntax
+const point = parser(function* () {
+  yield* char("(");
+  const x = yield* number;  // Full type inference here!
+  yield* char(",");
+  const y = yield* number;
+  yield* char(")");
+  return { x, y };  // Type: { x: number, y: number }
+});
+```
+
+The generator syntax lets you write imperative-looking code that's actually building a composable parser. Each `yield*` runs a parser and extracts its value.
+
+<Note>
+  The generator syntax is syntactic sugar over monadic combinators. You can also use `.map()`, `.flatMap()`, and other functional methods.
+</Note>
+
+## What you can build
+
+Parserator is suitable for:
+
+- **Configuration parsers** - INI, TOML, custom formats
+- **Data formats** - JSON, CSV, custom protocols
+- **Expression languages** - Math expressions, template languages
+- **Programming languages** - Complete language parsers with type checking
+- **Command-line parsers** - Shell-like syntax, arguments
+- **Protocol parsers** - Binary formats, network protocols
+
+<Tip>
+  Check out the [examples directory](https://github.com/saiashirwad/parserator/tree/main/examples) for complete parsers including JSON, Scheme, and a full ML-like language with pattern matching.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Parserator and set up your project
+  </Card>
+  
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first parser in 5 minutes
+  </Card>
+  
+  <Card title="Core concepts" icon="book" href="/concepts/parsers">
+    Learn the fundamental concepts
+  </Card>
+</CardGroup>

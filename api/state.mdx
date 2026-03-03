@@ -1,0 +1,516 @@
+---
+title: Parser State
+description: Types and utilities for managing parser state, including position tracking and state manipulation.
+---
+
+## Overview
+
+The state module provides types and utilities for managing parser state throughout the parsing process. It includes types for representing source positions, parser state, and parser output, as well as utility functions for state manipulation.
+
+```typescript
+import { State, ParserState, ParserOutput, SourcePosition } from 'parserator';
+```
+
+## Types
+
+### ParserState
+
+Represents the complete state of a parser at any point during parsing. Contains the input being parsed, current position, and optional debugging/context information.
+
+```typescript
+type ParserState = {
+  source: string;
+  offset: number;
+  line: number;
+  column: number;
+  debug?: boolean;
+  labelStack?: string[];
+  committed?: boolean;
+}
+```
+
+<ResponseField name="source" type="string" required>
+  The complete original input string
+</ResponseField>
+
+<ResponseField name="offset" type="number" required>
+  Current byte offset from start of input (0-indexed)
+</ResponseField>
+
+<ResponseField name="line" type="number" required>
+  Current line number (1-indexed)
+</ResponseField>
+
+<ResponseField name="column" type="number" required>
+  Current column number (1-indexed)
+</ResponseField>
+
+<ResponseField name="debug" type="boolean">
+  Whether debug mode is enabled for detailed error reporting
+</ResponseField>
+
+<ResponseField name="labelStack" type="string[]">
+  Stack of parsing context labels for error reporting
+</ResponseField>
+
+<ResponseField name="committed" type="boolean">
+  Whether the parser has committed to this parse path
+</ResponseField>
+
+```typescript
+const state: ParserState = {
+  source: "hello world",
+  offset: 0,
+  line: 1,
+  column: 1,
+  debug: true,
+  labelStack: ["expression", "identifier"],
+  committed: false
+};
+```
+
+### ParserOutput
+
+Represents the output of a parser operation, containing both the updated state and the parsing result (either success or error).
+
+```typescript
+type ParserOutput<T> = {
+  state: ParserState;
+  result: Either<T, ParseErrorBundle>;
+}
+```
+
+<ResponseField name="state" type="ParserState" required>
+  The parser state after the operation
+</ResponseField>
+
+<ResponseField name="result" type="Either<T, ParseErrorBundle>" required>
+  Either a successful result of type T or a ParseErrorBundle
+</ResponseField>
+
+```typescript
+const output: ParserOutput<string> = {
+  state: newState,
+  result: Either.right("parsed value")
+};
+```
+
+#### ParserOutput Factory
+
+Factory function for creating ParserOutput objects.
+
+```typescript
+const ParserOutput = <T>(
+  state: ParserState,
+  result: Either<T, ParseErrorBundle>
+): ParserOutput<T>
+```
+
+<ParamField path="state" type="ParserState" required>
+  The parser state after the operation
+</ParamField>
+
+<ParamField path="result" type="Either<T, ParseErrorBundle>" required>
+  Either a successful result or error bundle
+</ParamField>
+
+```typescript
+import { Either } from 'parserator';
+
+const successOutput = ParserOutput(newState, Either.right("success"));
+const errorOutput = ParserOutput(oldState, Either.left(errorBundle));
+```
+
+### SourcePosition
+
+Represents a position within source code with line, column, and byte offset. All values are 1-indexed for human readability.
+
+```typescript
+type SourcePosition = {
+  line: number;
+  column: number;
+  offset: number;
+}
+```
+
+<ResponseField name="line" type="number" required>
+  Line number (1-indexed)
+</ResponseField>
+
+<ResponseField name="column" type="number" required>
+  Column number (1-indexed)
+</ResponseField>
+
+<ResponseField name="offset" type="number" required>
+  Byte offset from start of input (0-indexed)
+</ResponseField>
+
+```typescript
+const position: SourcePosition = {
+  line: 3,      // Third line
+  column: 15,   // 15th character on that line
+  offset: 42    // 42nd character from start of input
+};
+```
+
+### Spanned
+
+A tuple containing a parsed value and its span information.
+
+```typescript
+type Spanned<T> = [value: T, span: Span]
+```
+
+## State Utilities
+
+The `State` object provides static methods for creating and manipulating parser state.
+
+### State.fromInput
+
+Creates a new parser state from an input string.
+
+```typescript
+State.fromInput(input: string): ParserState
+```
+
+<ParamField path="input" type="string" required>
+  The input string to parse
+</ParamField>
+
+<ResponseField name="state" type="ParserState">
+  A new parser state initialized at the start of the input
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello world");
+// {
+//   source: "hello world",
+//   offset: 0,
+//   line: 1,
+//   column: 1
+// }
+```
+
+### State.remaining
+
+Gets the remaining unparsed portion of the input.
+
+<Warning>
+  This allocates a new string. Prefer `peek()` or `charAt()` for better performance.
+</Warning>
+
+```typescript
+State.remaining(state: ParserState): string
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="remaining" type="string">
+  The remaining input string from current offset
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello world");
+const consumed = State.consume(state, 6);
+State.remaining(consumed); // "world"
+```
+
+### State.charAt
+
+Gets the character at the current offset without allocating.
+
+```typescript
+State.charAt(state: ParserState): string
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="char" type="string">
+  The character at current offset, or empty string if at end
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello");
+State.charAt(state); // "h"
+```
+
+### State.startsWith
+
+Checks if remaining input starts with the given string, without allocating.
+
+```typescript
+State.startsWith(state: ParserState, str: string): boolean
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="str" type="string" required>
+  The string to check for
+</ParamField>
+
+<ResponseField name="result" type="boolean">
+  True if remaining input starts with str
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello world");
+State.startsWith(state, "hello"); // true
+State.startsWith(state, "world"); // false
+```
+
+### State.consume
+
+Creates a new state by consuming n characters from the current state.
+
+```typescript
+State.consume(state: ParserState, n: number): ParserState
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="n" type="number" required>
+  Number of characters to consume
+</ParamField>
+
+<ResponseField name="newState" type="ParserState">
+  A new state with n characters consumed and position updated
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello");
+const newState = State.consume(state, 2);
+// newState.offset === 2
+// State.remaining(newState) === "llo"
+```
+
+<Note>
+  Throws an error if attempting to consume more characters than remaining.
+</Note>
+
+### State.consumeString
+
+Creates a new state by consuming a specific string from the current state.
+
+```typescript
+State.consumeString(state: ParserState, str: string): ParserState
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="str" type="string" required>
+  The string to consume
+</ParamField>
+
+<ResponseField name="newState" type="ParserState">
+  A new state with the string consumed and position updated
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello world");
+const newState = State.consumeString(state, "hello");
+// State.remaining(newState) === " world"
+```
+
+<Note>
+  Throws an error if the input doesn't start with the specified string.
+</Note>
+
+### State.consumeWhile
+
+Creates a new state by consuming characters while a predicate is true.
+
+```typescript
+State.consumeWhile(
+  state: ParserState,
+  predicate: (char: string) => boolean
+): ParserState
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="predicate" type="(char: string) => boolean" required>
+  Function that tests each character
+</ParamField>
+
+<ResponseField name="newState" type="ParserState">
+  A new state with matching characters consumed
+</ResponseField>
+
+```typescript
+const state = State.fromInput("123abc");
+const newState = State.consumeWhile(state, c => /[0-9]/.test(c));
+// State.remaining(newState) === "abc"
+```
+
+### State.peek
+
+Gets the next n characters from the input without consuming them.
+
+```typescript
+State.peek(state: ParserState, n: number = 1): string
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="n" type="number">
+  Number of characters to peek (default: 1)
+</ParamField>
+
+<ResponseField name="chars" type="string">
+  The next n characters as a string
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello");
+State.peek(state, 3); // "hel"
+State.peek(state);     // "h"
+```
+
+### State.isAtEnd
+
+Checks if the parser has reached the end of input.
+
+```typescript
+State.isAtEnd(state: ParserState): boolean
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="atEnd" type="boolean">
+  True if at end of input, false otherwise
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hi");
+State.isAtEnd(state); // false
+const endState = State.consume(state, 2);
+State.isAtEnd(endState); // true
+```
+
+### State.move
+
+Creates a new state by moving to a specific offset position in the source.
+
+```typescript
+State.move(state: ParserState, moveBy: number): ParserState
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ParamField path="moveBy" type="number" required>
+  Number of characters to move forward from current position
+</ParamField>
+
+<ResponseField name="newState" type="ParserState">
+  A new state at the target position
+</ResponseField>
+
+### State.computePosition
+
+Computes the actual line and column for a given offset.
+
+<Warning>
+  This is expensive (O(offset)) so only call when creating errors.
+</Warning>
+
+```typescript
+State.computePosition(state: ParserState): ParserState
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="updatedState" type="ParserState">
+  Updated state with correct line/column
+</ResponseField>
+
+### State.printPosition
+
+Creates a human-readable string representation of the current parser position.
+
+```typescript
+State.printPosition(state: ParserState): string
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="position" type="string">
+  A formatted string showing line, column, and offset
+</ResponseField>
+
+```typescript
+const state = { source: "hello", offset: 5, line: 1, column: 6 };
+const posStr = State.printPosition(state);
+// Returns: "line 1, column 6, offset 5"
+```
+
+### State.toPosition
+
+Creates a SourcePosition from the current parser state.
+
+```typescript
+State.toPosition(state: ParserState): SourcePosition
+```
+
+<ParamField path="state" type="ParserState" required>
+  The current parser state
+</ParamField>
+
+<ResponseField name="position" type="SourcePosition">
+  A SourcePosition object
+</ResponseField>
+
+```typescript
+const state = State.fromInput("hello");
+const position = State.toPosition(state);
+// { line: 1, column: 1, offset: 0 }
+```
+
+## How State Flows Through Parsing
+
+Parser state flows through the parsing process in the following way:
+
+1. **Initial State**: Created from input using `State.fromInput(input)`
+2. **Parser Execution**: Each parser receives the current state and returns a new state
+3. **State Updates**: Successful parsers advance the offset, failed parsers may preserve the original state
+4. **Sequencing**: State flows from one parser to the next in sequential operations
+5. **Backtracking**: Failed parsers in choice operations reset to the original state
+6. **Commit Points**: Once committed, backtracking is prevented
+
+```typescript
+// Example: State flow through parsing
+const initialState = State.fromInput("hello world");
+
+// First parser consumes "hello"
+const { state: state1, result: result1 } = stringParser.run(initialState);
+// state1.offset = 5
+
+// Second parser consumes " "
+const { state: state2, result: result2 } = whitespaceParser.run(state1);
+// state2.offset = 6
+
+// Third parser consumes "world"
+const { state: state3, result: result3 } = wordParser.run(state2);
+// state3.offset = 11
+```

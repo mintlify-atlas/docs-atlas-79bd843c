@@ -1,80 +1,234 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first parser in 5 minutes with a step-by-step tutorial
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+Let's build a parser for coordinate points like `(10,20)`. You'll learn the core concepts of Parserator through a hands-on example.
 
-### Step 1: Set up your local environment
+## What we'll build
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+By the end of this tutorial, you'll have a parser that:
 
-### Step 2: Deploy your changes
+- Parses coordinates in the format `(x,y)`
+- Handles numbers with multiple digits
+- Provides helpful error messages
+- Has full TypeScript type inference
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Step title="Parse a single digit">
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Start by importing the basic combinators and parsing a single digit:
 
-### Step 3: Go live
+```typescript
+import { digit } from "parserator";
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+const result = digit.parseOrThrow("5");
+console.log(result); // "5"
+```
 
-## Next steps
+The `digit` parser matches any single digit character (0-9) and returns it as a string.
 
-Now that you have your docs running, explore these key features:
+<Tip>
+  Try changing the input to a non-digit like `"a"` to see what error message you get!
+</Tip>
 
-<CardGroup cols={2}>
+</Step>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+<Step title="Parse multiple digits into a number">
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+Use `many1` to parse one or more digits, then transform them into a number:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+```typescript
+import { digit, many1 } from "parserator";
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+const number = many1(digit).map(digits => parseInt(digits.join("")));
 
-</CardGroup>
+const result = number.parseOrThrow("123");
+console.log(result); // 123
+console.log(typeof result); // "number"
+```
+
+Here's what's happening:
+- `many1(digit)` parses one or more digits, returning `string[]`
+- `.map()` transforms the array of digit strings into a single number
+- TypeScript infers the final type as `number`
+
+</Step>
+
+<Step title="Use generator syntax to parse coordinates">
+
+Now combine parsers using generator syntax to parse the full coordinate format:
+
+```typescript
+import { parser, char, many1, digit } from "parserator";
+
+const number = many1(digit).map(digits => parseInt(digits.join("")));
+
+const point = parser(function* () {
+  yield* char("(");
+  const x = yield* number;
+  yield* char(",");
+  const y = yield* number;
+  yield* char(")");
+  return { x, y };
+});
+
+const result = point.parseOrThrow("(10,20)");
+console.log(result); // { x: 10, y: 20 }
+```
+
+The `parser` function creates a parser from a generator. Each `yield*` runs a parser and extracts its value. The final `return` is the parser's result.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Notice how TypeScript automatically infers that `x` and `y` are numbers, and the final result is `{ x: number, y: number }`.
 </Note>
+
+</Step>
+
+<Step title="Use .parse() for error handling">
+
+The `parseOrThrow()` method throws an exception on failure. Use `.parse()` for explicit error handling:
+
+```typescript
+const result = point.parse("(10,20)");
+
+if (result.result._tag === "Left") {
+  // Parse failed
+  const error = result.result.left;
+  console.log(error.format("ansi")); // Pretty error with colors
+} else {
+  // Parse succeeded
+  const value = result.result.right;
+  console.log(value); // { x: 10, y: 20 }
+}
+```
+
+The `.parse()` method returns a `ParserOutput` with an `Either` type:
+- `Left` contains the error bundle
+- `Right` contains the successful result
+
+</Step>
+
+<Step title="Add better error messages">
+
+Use `.expect()` to provide context-specific error messages:
+
+```typescript
+const point = parser(function* () {
+  yield* char("(").expect("opening parenthesis '('");
+  const x = yield* number;
+  yield* char(",").expect("comma between coordinates");
+  const y = yield* number;
+  yield* char(")").expect("closing parenthesis ')'");
+  return { x, y };
+});
+
+// Try parsing invalid input
+const result = point.parse("(10; 20)");
+if (result.result._tag === "Left") {
+  console.log(result.result.left.format("ansi"));
+  // Error: Expected comma between coordinates
+}
+```
+
+Now errors tell you exactly what went wrong instead of just "parse failed".
+
+</Step>
+
+<Step title="Handle whitespace (optional)">
+
+Real-world input often has extra whitespace. Use `string` and `regex` to handle it:
+
+```typescript
+import { parser, char, string, many1, digit, regex, optional } from "parserator";
+
+const whitespace = regex(/\s*/);
+function token<T>(p: any) {
+  return p.trimLeft(whitespace);
+}
+
+const number = many1(digit).map(digits => parseInt(digits.join("")));
+
+const point = parser(function* () {
+  yield* token(char("("));
+  const x = yield* token(number);
+  yield* token(char(","));
+  const y = yield* token(number);
+  yield* token(char(")"));
+  return { x, y };
+});
+
+point.parseOrThrow("( 10 , 20 )"); // { x: 10, y: 20 }
+point.parseOrThrow("(10,20)");     // { x: 10, y: 20 }
+```
+
+</Step>
+
+</Steps>
+
+## Complete example
+
+Here's the full code from this tutorial:
+
+```typescript
+import { parser, char, many1, digit } from "parserator";
+
+const number = many1(digit).map(digits => parseInt(digits.join("")));
+
+const point = parser(function* () {
+  yield* char("(").expect("opening parenthesis '('");
+  const x = yield* number;
+  yield* char(",").expect("comma between coordinates");
+  const y = yield* number;
+  yield* char(")").expect("closing parenthesis ')'");
+  return { x, y };
+});
+
+// Success case
+const result1 = point.parseOrThrow("(10,20)");
+console.log(result1); // { x: 10, y: 20 }
+
+// Error handling
+const result2 = point.parse("(10; 20)");
+if (result2.result._tag === "Left") {
+  console.log(result2.result.left.format("ansi"));
+}
+```
+
+## Key concepts you learned
+
+- **Basic parsers**: `digit`, `char()`, `string()` match simple patterns
+- **Combinators**: `many1()` repeats a parser one or more times
+- **Transformation**: `.map()` transforms parser results
+- **Generator syntax**: `parser(function* () { ... })` composes parsers sequentially
+- **Error handling**: `.parse()` vs `.parseOrThrow()`
+- **Better errors**: `.expect()` adds context to error messages
+
+## What's next?
+
+You now know enough to build useful parsers! Here are some ideas to explore:
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts/parsers">
+    Deep dive into parser combinators, generators, and error handling
+  </Card>
+  
+  <Card title="API reference" icon="code" href="/api/combinators">
+    Explore all available parsers and combinators
+  </Card>
+  
+  <Card title="Error handling" icon="bug" href="/concepts/error-handling">
+    Learn about commit, backtracking, and rich error messages
+  </Card>
+  
+  <Card title="Examples" icon="lightbulb" href="/examples/json-parser">
+    Study complete examples like JSON, INI, and language parsers
+  </Card>
+</CardGroup>
+
+<Tip>
+  Try modifying the parser to support 3D coordinates like `(10,20,30)` or optional whitespace. Experimenting is the best way to learn!
+</Tip>

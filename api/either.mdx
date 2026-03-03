@@ -1,0 +1,338 @@
+---
+title: Either
+description: The Either type for representing success or failure in parser results, with utilities for working with these values.
+---
+
+## Overview
+
+The `Either<R, L>` type represents a value that can be one of two types: a `Right` (success) value of type `R`, or a `Left` (error) value of type `L`. In Parserator, `Either` is used extensively to represent parser results, where `Right` contains the successfully parsed value and `Left` contains error information.
+
+```typescript
+import { Either, Left, Right } from 'parserator';
+```
+
+## Type Definition
+
+```typescript
+type Either<R, L> = Left<L, R> | Right<R, L>
+```
+
+An `Either` is a discriminated union of `Left` and `Right` classes, both of which have a `_tag` property for type discrimination.
+
+## Classes
+
+### Left
+
+Represents a failure or error case.
+
+```typescript
+class Left<L, R = never> {
+  readonly _tag = "Left";
+  constructor(public readonly left: L);
+}
+```
+
+<ResponseField name="_tag" type="'Left'" required>
+  Discriminator property for type checking
+</ResponseField>
+
+<ResponseField name="left" type="L" required>
+  The error or failure value
+</ResponseField>
+
+### Right
+
+Represents a success case.
+
+```typescript
+class Right<R, L = any> {
+  readonly _tag = "Right";
+  constructor(public readonly right: R);
+}
+```
+
+<ResponseField name="_tag" type="'Right'" required>
+  Discriminator property for type checking
+</ResponseField>
+
+<ResponseField name="right" type="R" required>
+  The success value
+</ResponseField>
+
+## Static Methods
+
+### Either.left
+
+Creates a `Left` (error) value.
+
+```typescript
+static left<L, R = never>(l: L): Either<R, L>
+```
+
+<ParamField path="l" type="L" required>
+  The error value to wrap
+</ParamField>
+
+<ResponseField name="either" type="Either<R, L>">
+  An Either in the Left state
+</ResponseField>
+
+```typescript
+const error = Either.left(new Error("Parse failed"));
+// Either<never, Error>
+```
+
+### Either.right
+
+Creates a `Right` (success) value.
+
+```typescript
+static right<R, L = never>(r: R): Either<R, L>
+```
+
+<ParamField path="r" type="R" required>
+  The success value to wrap
+</ParamField>
+
+<ResponseField name="either" type="Either<R, L>">
+  An Either in the Right state
+</ResponseField>
+
+```typescript
+const success = Either.right(42);
+// Either<number, never>
+```
+
+<Note>
+  `Either.right` uses pre-allocated instances for common values (`undefined`, `true`, `false`, `""`) for better performance.
+</Note>
+
+### Either.isLeft
+
+Type guard to check if an Either is a Left (error).
+
+```typescript
+static isLeft<R, L>(either: Either<R, L>): either is Left<L, R>
+```
+
+<ParamField path="either" type="Either<R, L>" required>
+  The Either to check
+</ParamField>
+
+<ResponseField name="isLeft" type="boolean">
+  True if the Either is a Left, false otherwise
+</ResponseField>
+
+```typescript
+const result = parseNumber("abc");
+if (Either.isLeft(result)) {
+  console.error("Parse failed:", result.left);
+}
+```
+
+### Either.isRight
+
+Type guard to check if an Either is a Right (success).
+
+```typescript
+static isRight<R, L>(either: Either<R, L>): either is Right<R, L>
+```
+
+<ParamField path="either" type="Either<R, L>" required>
+  The Either to check
+</ParamField>
+
+<ResponseField name="isRight" type="boolean">
+  True if the Either is a Right, false otherwise
+</ResponseField>
+
+```typescript
+const result = parseNumber("42");
+if (Either.isRight(result)) {
+  console.log("Parsed value:", result.right);
+}
+```
+
+### Either.match
+
+Pattern matches on an Either, applying different functions for Left and Right cases.
+
+```typescript
+static match<R, L, T>(
+  onLeft: (left: L) => T,
+  onRight: (right: R) => T
+): (either: Either<R, L>) => T
+```
+
+<ParamField path="onLeft" type="(left: L) => T" required>
+  Function to call if the Either is a Left
+</ParamField>
+
+<ParamField path="onRight" type="(right: R) => T" required>
+  Function to call if the Either is a Right
+</ParamField>
+
+<ResponseField name="matcher" type="(either: Either<R, L>) => T">
+  A function that takes an Either and returns the result of applying the appropriate function
+</ResponseField>
+
+```typescript
+const result = parseNumber("42");
+const message = Either.match(
+  error => `Error: ${error}`,
+  value => `Success: ${value}`
+)(result);
+// "Success: 42"
+```
+
+### Either.gen
+
+Creates an Either from a generator function, enabling imperative-style composition with early returns on Left values.
+
+```typescript
+static gen<R, L>(
+  f: () => Generator<Either<any, L>, R, any>
+): Either<R, L>
+```
+
+<ParamField path="f" type="() => Generator<Either<any, L>, R, any>" required>
+  A generator function that yields Either values and returns the final result
+</ParamField>
+
+<ResponseField name="either" type="Either<R, L>">
+  An Either containing the final result or the first Left encountered
+</ResponseField>
+
+```typescript
+const result = Either.gen(function* () {
+  const a = yield* Either.right(10);
+  const b = yield* Either.right(20);
+  const c = yield* Either.right(12);
+  return a + b + c;
+});
+// Either.right(42)
+
+const error = Either.gen(function* () {
+  const a = yield* Either.right(10);
+  const b = yield* Either.left("error");
+  const c = yield* Either.right(12);  // Never reached
+  return a + b + c;
+});
+// Either.left("error")
+```
+
+## Usage in Parser Results
+
+In Parserator, `Either` is used to represent parser results:
+
+- `Either<T, ParseErrorBundle>` - A successful parse of type `T` or a bundle of parse errors
+- `Right<T>` - Successful parse containing the value
+- `Left<ParseErrorBundle>` - Failed parse containing error information
+
+```typescript
+const parser = number();
+const output = parser.parse("42");
+
+if (output.result._tag === "Right") {
+  console.log("Parsed:", output.result.right); // 42
+} else {
+  console.error("Error:", output.result.left.format());
+}
+```
+
+## Pattern Matching Examples
+
+### Basic Pattern Matching
+
+```typescript
+const result: Either<number, string> = Either.right(42);
+
+// Using match
+const message = Either.match(
+  error => `Failed: ${error}`,
+  value => `Success: ${value}`
+)(result);
+
+// Using type guards
+if (Either.isRight(result)) {
+  console.log(result.right); // TypeScript knows this is number
+} else {
+  console.error(result.left); // TypeScript knows this is string
+}
+```
+
+### Using Tag Discrimination
+
+```typescript
+const result: Either<number, Error> = parseNumber(input);
+
+if (result._tag === "Right") {
+  // TypeScript narrows to Right<number, Error>
+  const value: number = result.right;
+  console.log("Parsed:", value);
+} else {
+  // TypeScript narrows to Left<Error, number>
+  const error: Error = result.left;
+  console.error("Parse failed:", error.message);
+}
+```
+
+### Generator-Based Composition
+
+```typescript
+// Chain multiple Either operations
+const processData = Either.gen(function* () {
+  const raw = yield* readFile("data.txt");
+  const parsed = yield* parseJSON(raw);
+  const validated = yield* validateSchema(parsed);
+  return transformed(validated);
+});
+
+// If any step returns Left, execution stops and returns that error
+// If all succeed, returns Right with the final value
+```
+
+### Working with Parser Results
+
+```typescript
+const parser = parser(function* () {
+  const name = yield* identifier;
+  yield* char(':');
+  const value = yield* number;
+  return { name, value };
+});
+
+const output = parser.parse("count:42");
+
+// Pattern match on the result
+const result = Either.match(
+  errorBundle => {
+    console.error(errorBundle.format());
+    return null;
+  },
+  value => {
+    console.log(`${value.name} = ${value.value}`);
+    return value;
+  }
+)(output.result);
+```
+
+## Performance Optimizations
+
+The `Either` implementation includes several performance optimizations:
+
+1. **Pre-allocated instances**: Common `Right` values (`undefined`, `true`, `false`, `""`, `[]`) are pre-allocated to avoid repeated allocations
+2. **Lightweight classes**: Both `Left` and `Right` are simple classes with minimal overhead
+3. **Direct property access**: The `_tag` discriminator allows for fast type checking without function calls
+
+```typescript
+// These all use pre-allocated instances
+Either.right(undefined);
+Either.right(true);
+Either.right(false);
+Either.right("");
+
+// Custom values create new instances
+Either.right(42);
+Either.right("hello");
+```

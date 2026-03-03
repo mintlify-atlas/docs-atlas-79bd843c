@@ -1,0 +1,630 @@
+---
+title: Parser
+description: The core Parser class that represents a parser combinator for building complex parsers from simple building blocks.
+---
+
+## Overview
+
+The `Parser<T>` class is the fundamental type in Parserator that represents a parser combinator. A parser is a function that takes an input state and produces either a successful parse result with the remaining input state, or an error describing why the parse failed.
+
+Parsers can be composed using various combinators to build complex parsers from simple building blocks.
+
+```typescript
+import { Parser } from 'parserator';
+```
+
+## Constructor
+
+<ParamField path="run" type="(state: ParserState) => ParserOutput<T>" required>
+  The main parsing function that processes input state and returns a parser output
+</ParamField>
+
+<ParamField path="runFast" type="(ctx: MutableParserContext) => FastPathResult<T>">
+  Optional optimized fast-path parsing function for better performance
+</ParamField>
+
+## Running Parsers
+
+### parse
+
+Runs the parser on the given input string and returns the full parser output.
+
+```typescript
+parse(input: string): ParserOutput<T>
+```
+
+<ParamField path="input" type="string" required>
+  The string to parse
+</ParamField>
+
+<ResponseField name="ParserOutput<T>" type="ParserOutput<T>">
+  A parser output containing both the result (success or error) and final state
+</ResponseField>
+
+```typescript
+const parser = string("hello");
+const output = parser.parse("hello world");
+// output.result contains Either.right("hello")
+// output.state contains remaining input " world" and position info
+```
+
+### parseOrError
+
+Runs the parser on the given input and returns either the parsed value or error bundle.
+
+```typescript
+parseOrError(input: string): T | ParseErrorBundle
+```
+
+<ParamField path="input" type="string" required>
+  The string to parse
+</ParamField>
+
+<ResponseField name="result" type="T | ParseErrorBundle">
+  The successfully parsed value of type T, or a ParseErrorBundle on failure
+</ResponseField>
+
+```typescript
+const parser = number();
+const result = parser.parseOrError("42");
+if (result instanceof ParseErrorBundle) {
+  console.error(result.format());
+} else {
+  console.log(result); // 42
+}
+```
+
+### parseOrThrow
+
+Runs the parser on the given input and returns the parsed value or throws an error.
+
+```typescript
+parseOrThrow(input: string): T
+```
+
+<ParamField path="input" type="string" required>
+  The string to parse
+</ParamField>
+
+<ResponseField name="result" type="T">
+  The successfully parsed value of type T
+</ResponseField>
+
+```typescript
+const parser = number();
+try {
+  const value = parser.parseOrThrow("42");
+  console.log(value); // 42
+} catch (error) {
+  if (error instanceof ParseErrorBundle) {
+    console.error(error.format());
+  }
+}
+```
+
+## Static Methods
+
+### Parser.lift
+
+Creates a parser that always succeeds with the given value without consuming any input.
+
+```typescript
+static lift<A>(a: A): Parser<A>
+```
+
+<ParamField path="a" type="A" required>
+  The value to lift into the parser context
+</ParamField>
+
+<ResponseField name="parser" type="Parser<A>">
+  A parser that always succeeds with the given value
+</ResponseField>
+
+```typescript
+const always42 = Parser.lift(42);
+always42.parse("any input"); // succeeds with 42
+
+// Useful for providing default values
+const parseNumberOrDefault = number.or(Parser.lift(0));
+
+// Can be used to inject values in parser chains
+const parser = parser(function* () {
+  const name = yield* identifier;
+  const separator = yield* Parser.lift(":");
+  const value = yield* number;
+  return { name, separator, value };
+});
+```
+
+### Parser.liftA2
+
+Lifts a binary function into the parser context, applying it to the results of two parsers.
+
+```typescript
+static liftA2<A, B, C>(
+  ma: Parser<A>,
+  mb: Parser<B>,
+  f: (a: A, b: B) => C
+): Parser<C>
+```
+
+<ParamField path="ma" type="Parser<A>" required>
+  The first parser
+</ParamField>
+
+<ParamField path="mb" type="Parser<B>" required>
+  The second parser
+</ParamField>
+
+<ParamField path="f" type="(a: A, b: B) => C" required>
+  A function that takes the results of both parsers and produces a new value
+</ParamField>
+
+<ResponseField name="parser" type="Parser<C>">
+  A parser that applies the function to the results of both input parsers
+</ResponseField>
+
+```typescript
+// Combine two parsed values with a function
+const parsePoint = Parser.liftA2(
+  number,
+  number.trimLeft(comma),
+  (x, y) => ({ x, y })
+);
+parsePoint.parse("10, 20"); // succeeds with { x: 10, y: 20 }
+
+// Build a data structure from multiple parsers
+const parsePerson = Parser.liftA2(
+  identifier,
+  number.trimLeft(colon),
+  (name, age) => ({ name, age })
+);
+parsePerson.parse("John:30"); // succeeds with { name: "John", age: 30 }
+```
+
+### Parser.ap
+
+Applies a parser that produces a function to a parser that produces a value.
+
+```typescript
+static ap<A, B>(ma: Parser<A>, mf: Parser<(_: A) => B>): Parser<B>
+```
+
+<ParamField path="ma" type="Parser<A>" required>
+  A parser that produces a value
+</ParamField>
+
+<ParamField path="mf" type="Parser<(_: A) => B>" required>
+  A parser that produces a function from that value type to another type
+</ParamField>
+
+<ResponseField name="parser" type="Parser<B>">
+  A parser that applies the parsed function to the parsed value
+</ResponseField>
+
+```typescript
+// Parse a function name and apply it
+const parseFn = choice([
+  string("double").map(() => (x: number) => x * 2),
+  string("square").map(() => (x: number) => x * x)
+]);
+const result = Parser.ap(number, parseFn.trimLeft(space));
+result.parse("5 double"); // succeeds with 10
+result.parse("5 square"); // succeeds with 25
+```
+
+### Parser.pure
+
+Creates a parser that always succeeds with the given value without consuming input. This is an alias for `Parser.lift`.
+
+```typescript
+static pure<A>(a: A): Parser<A>
+```
+
+### Parser.fatal
+
+Creates a parser that always fails with a fatal error.
+
+```typescript
+static fatal(message: string): Parser<never>
+```
+
+<ParamField path="message" type="string" required>
+  The error message to display
+</ParamField>
+
+<ResponseField name="parser" type="Parser<never>">
+  A parser that always fails with a fatal error
+</ResponseField>
+
+Fatal errors are non-recoverable and prevent backtracking in choice combinators.
+
+```typescript
+const number = regex(/-?[0-9]+/).map(Number);
+const parsePositive = number.flatMap(n =>
+  n > 0 ? Parser.lift(n) : Parser.fatal("Expected positive number")
+);
+```
+
+### Parser.lazy
+
+Creates a new parser that lazily evaluates the given function. This is useful for creating recursive parsers.
+
+```typescript
+static lazy<T>(fn: () => Parser<T>): Parser<T>
+```
+
+<ParamField path="fn" type="() => Parser<T>" required>
+  A function that returns a parser
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser that evaluates the function when parsing
+</ResponseField>
+
+```typescript
+// Create a recursive parser for nested parentheses
+const parens: Parser<string> = Parser.lazy(() =>
+  between(
+    char('('),
+    char(')'),
+    parens
+  )
+);
+```
+
+### Parser.gen
+
+Creates a parser from a generator function, enabling imperative-style parser composition.
+
+```typescript
+static gen<T>(f: () => Generator<Parser<any>, T, any>): Parser<T>
+```
+
+<ParamField path="f" type="() => Generator<Parser<any>, T, any>" required>
+  A generator function that yields parsers and returns the final value
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser that executes the generator
+</ResponseField>
+
+## Transformation Methods
+
+### map
+
+Transforms the result of this parser by applying a function to the parsed value.
+
+```typescript
+map<B>(f: (a: T) => B): Parser<B>
+```
+
+<ParamField path="f" type="(a: T) => B" required>
+  A function that transforms the parsed value
+</ParamField>
+
+<ResponseField name="parser" type="Parser<B>">
+  A new parser that produces the transformed value
+</ResponseField>
+
+```typescript
+// Parse a number and double it
+const doubled = number().map(n => n * 2);
+doubled.parse("21"); // succeeds with 42
+
+// Parse a string and get its length
+const stringLength = quoted('"').map(s => s.length);
+stringLength.parse('"hello"'); // succeeds with 5
+
+// Chain multiple transformations
+const parser = identifier()
+  .map(s => s.toUpperCase())
+  .map(s => ({ name: s }));
+parser.parse("hello"); // succeeds with { name: "HELLO" }
+```
+
+### flatMap
+
+Chains this parser with another parser that depends on the result of this one.
+
+```typescript
+flatMap<B>(f: (a: T) => Parser<B>): Parser<B>
+```
+
+<ParamField path="f" type="(a: T) => Parser<B>" required>
+  A function that takes the parsed value and returns a new parser
+</ParamField>
+
+<ResponseField name="parser" type="Parser<B>">
+  A new parser that runs the second parser after the first succeeds
+</ResponseField>
+
+```typescript
+// Parse a number and then that many 'a' characters
+const parser = number().flatMap(n =>
+  string('a'.repeat(n))
+);
+parser.parse("3aaa"); // succeeds with "aaa"
+
+// Parse a type annotation and return appropriate parser
+const typeParser = identifier().flatMap(type => {
+  switch(type) {
+    case "int": return number();
+    case "string": return quoted('"');
+    default: return Parser.fail({ message: `Unknown type: ${type}` });
+  }
+});
+
+// Validate parsed values
+const positiveNumber = number().flatMap(n =>
+  n > 0
+    ? Parser.lift(n)
+    : Parser.fail({ message: "Expected positive number" })
+);
+```
+
+## Sequencing Methods
+
+### zip
+
+Combines this parser with another parser, returning both results as a tuple.
+
+```typescript
+zip<B>(parserB: Parser<B>): Parser<[T, B]>
+```
+
+<ParamField path="parserB" type="Parser<B>" required>
+  The second parser to run after this one
+</ParamField>
+
+<ResponseField name="parser" type="Parser<[T, B]>">
+  A parser that produces a tuple of both results
+</ResponseField>
+
+```typescript
+// Parse a coordinate pair
+const coordinate = number().zip(number().trimLeft(comma));
+coordinate.parse("10, 20"); // succeeds with [10, 20]
+
+// Parse a key-value pair
+const keyValue = identifier().zip(number().trimLeft(colon));
+keyValue.parse("age:30"); // succeeds with ["age", 30]
+```
+
+### then / zipRight
+
+Sequences this parser with another, keeping only the second result.
+
+```typescript
+then<B>(parserB: Parser<B>): Parser<B>
+zipRight<B>(parserB: Parser<B>): Parser<B>  // alias
+```
+
+<ParamField path="parserB" type="Parser<B>" required>
+  The parser whose result will be kept
+</ParamField>
+
+<ResponseField name="parser" type="Parser<B>">
+  A parser that produces only the second result
+</ResponseField>
+
+```typescript
+// Parse a value after a label
+const labeledValue = string("value:").then(number());
+labeledValue.parse("value:42"); // succeeds with 42
+
+// Skip whitespace before parsing
+const trimmedNumber = whitespace().then(number());
+trimmedNumber.parse("   123"); // succeeds with 123
+```
+
+### thenDiscard / zipLeft
+
+Sequences this parser with another, keeping only the first result.
+
+```typescript
+thenDiscard<B>(parserB: Parser<B>): Parser<T>
+zipLeft<B>(parserB: Parser<B>): Parser<T>  // alias
+```
+
+<ParamField path="parserB" type="Parser<B>" required>
+  The parser to run but whose result will be discarded
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  A parser that produces only the first result
+</ResponseField>
+
+```typescript
+// Parse a statement and discard the semicolon
+const statement = expression().thenDiscard(char(';'));
+statement.parse("x + 1;"); // succeeds with the expression, semicolon discarded
+
+// Parse array elements and discard separators
+const element = number().thenDiscard(optional(char(',')));
+```
+
+## Whitespace Handling
+
+### trim
+
+Parses the parser surrounded by the given parser (typically whitespace).
+
+```typescript
+trim(parser: Parser<any>): Parser<T>
+```
+
+<ParamField path="parser" type="Parser<any>" required>
+  The parser to run before and after this parser (typically whitespace)
+</ParamField>
+
+### trimLeft
+
+Parses this parser after the given parser.
+
+```typescript
+trimLeft(parser: Parser<any>): Parser<T>
+```
+
+<ParamField path="parser" type="Parser<any>" required>
+  The parser to run before this parser
+</ParamField>
+
+### trimRight
+
+Parses this parser before the given parser.
+
+```typescript
+trimRight(parser: Parser<any>): Parser<T>
+```
+
+<ParamField path="parser" type="Parser<any>" required>
+  The parser to run after this parser
+</ParamField>
+
+## Error Handling
+
+### expect
+
+Adds a semantic expectation message to the parser for better error reporting.
+
+```typescript
+expect(description: string): Parser<T>
+```
+
+<ParamField path="description" type="string" required>
+  The description for the expectation (will be prefixed with "Expected ")
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser with the expectation message added
+</ResponseField>
+
+```typescript
+const openParen = char('(').expect("opening parenthesis");
+// On failure: "Expected opening parenthesis"
+```
+
+### label
+
+Adds a label to this parser for better error messages.
+
+```typescript
+label(name: string): Parser<T>
+```
+
+<ParamField path="name" type="string" required>
+  The label name to add to the context stack
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser with the label added
+</ResponseField>
+
+## Control Flow
+
+### commit
+
+Commits to the current parsing path, preventing backtracking beyond this point.
+
+```typescript
+commit(): Parser<T>
+```
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser that sets the commit flag after successful parsing
+</ResponseField>
+
+```typescript
+// Use commit after matching a keyword to ensure specific error messages
+const ifStatement = parser(function* () {
+  yield* keyword("if");
+  yield* commit();  // After seeing "if", we know it's an if statement
+  yield* char('(').expect("opening parenthesis after 'if'");
+  const condition = yield* expression;
+  yield* char(')').expect("closing parenthesis");
+  const body = yield* block;
+  return { type: "if", condition, body };
+});
+
+// Input: "if x > 5 {}"  (missing parentheses)
+// Without commit: "Expected if, while, or assignment"
+// With commit: "Expected opening parenthesis after 'if'"
+```
+
+### atomic
+
+Creates an atomic parser that either fully succeeds or resets to the original state.
+
+```typescript
+atomic(): Parser<T>
+```
+
+<ResponseField name="parser" type="Parser<T>">
+  A new parser that resets state on failure
+</ResponseField>
+
+```typescript
+// Without atomic - partial consumption on failure
+const badParser = parser(function* () {
+  yield* string("foo");
+  yield* string("bar");  // If this fails, "foo" is already consumed
+});
+
+// With atomic - no consumption on failure
+const goodParser = parser(function* () {
+  yield* string("foo");
+  yield* string("bar");  // If this fails, we reset to before "foo"
+}).atomic();
+```
+
+## Utility Methods
+
+### tap
+
+Adds a tap point to observe the current state and result during parsing. Useful for debugging.
+
+```typescript
+tap(
+  callback: (args: { state: ParserState; result: ParserOutput<T> }) => void
+): Parser<T>
+```
+
+<ParamField path="callback" type="(args: { state: ParserState; result: ParserOutput<T> }) => void" required>
+  Function called with current state and result
+</ParamField>
+
+<ResponseField name="parser" type="Parser<T>">
+  The same parser with the tap point added
+</ResponseField>
+
+```typescript
+const parser = parser(function* () {
+  const name = yield* identifier();
+  yield* char(':');
+  const value = yield* number();
+  return { name, value };
+});
+parser.tap(({ state, result }) => {
+  console.log(`Parsed ${result} at position ${state.offset}`);
+});
+```
+
+### spanned
+
+Wraps the parser result with span information.
+
+```typescript
+spanned(): Parser<Spanned<T>>
+```
+
+<ResponseField name="parser" type="Parser<Spanned<T>>">
+  A parser that produces a tuple of [value, span]
+</ResponseField>
+
+```typescript
+const parser = identifier().spanned();
+const [value, span] = parser.parseOrThrow("hello");
+// value = "hello"
+// span = { offset: 0, line: 1, column: 1, length: 5, source: "hello" }
+```

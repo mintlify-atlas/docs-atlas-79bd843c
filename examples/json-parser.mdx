@@ -1,0 +1,190 @@
+---
+title: "JSON Parser"
+description: "Build a complete JSON parser with Parserator combinators"
+---
+
+# JSON Parser
+
+This example demonstrates how to build a complete JSON parser using Parserator's combinator library. The parser handles all JSON data types including objects, arrays, strings, numbers, booleans, and null values.
+
+## Complete Implementation
+
+```typescript
+import {
+  parser,
+  char,
+  string,
+  regex,
+  or,
+  sepBy,
+  between,
+  Parser
+} from "parserator";
+
+const whitespace = regex(/\s*/);
+function token<T>(p: Parser<T>): Parser<T> {
+  return p.trimLeft(whitespace);
+}
+
+// Primitive values
+const jsonNull = string("null").map(() => null);
+const jsonTrue = string("true").map(() => true);
+const jsonFalse = string("false").map(() => false);
+const jsonBool = or(jsonTrue, jsonFalse);
+
+const jsonNumber = regex(/-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/).map(
+  Number
+);
+
+// String parsing with escape sequences
+const jsonString = parser(function* () {
+  yield* char('"');
+  const chars: string[] = [];
+
+  while (true) {
+    const next = yield* or(
+      string('\\"').map(() => '"'),
+      string("\\\\").map(() => "\\"),
+      string("\\/").map(() => "/"),
+      string("\\b").map(() => "\b"),
+      string("\\f").map(() => "\f"),
+      string("\\n").map(() => "\n"),
+      string("\\r").map(() => "\r"),
+      string("\\t").map(() => "\t"),
+      regex(/\\u[0-9a-fA-F]{4}/).map(s =>
+        String.fromCharCode(parseInt(s.slice(2), 16))
+      ),
+      regex(/[^"\\]+/),
+      char('"').map(() => null)
+    );
+
+    if (next === null) break;
+    chars.push(next);
+  }
+
+  return chars.join("");
+});
+
+// Forward declaration for recursive structures
+const jsonValue: Parser<any> = Parser.lazy(() =>
+  or(jsonNull, jsonBool, jsonNumber, jsonString, jsonArray, jsonObject)
+);
+
+// Array: [value1, value2, ...]
+const jsonArray: Parser<any[]> = between(
+  token(char("[")),
+  token(char("]")),
+  sepBy(token(jsonValue), token(char(",")))
+);
+
+// Object: {"key": value, ...}
+const jsonObject: Parser<Record<string, any>> = parser(function* () {
+  yield* token(char("{"));
+
+  const pairs = yield* sepBy(
+    parser(function* () {
+      const key = yield* token(jsonString);
+      yield* token(char(":"));
+      const value = yield* token(jsonValue);
+      return [key, value] as const;
+    }),
+    token(char(","))
+  );
+
+  yield* token(char("}"));
+
+  return Object.fromEntries(pairs);
+});
+
+export const json = token(jsonValue);
+```
+
+## How It Works
+
+### Primitive Values
+
+The parser starts with the simplest JSON values:
+
+- **Null**: Matches the literal string `"null"` and returns `null`
+- **Booleans**: Matches `"true"` or `"false"` and returns the corresponding boolean
+- **Numbers**: Uses a regex to match integers, decimals, and scientific notation
+
+### String Parsing
+
+The string parser handles:
+- Opening and closing quotes
+- Escape sequences (`\"`, `\\`, `\n`, `\t`, etc.)
+- Unicode escape sequences (`\uXXXX`)
+- Regular characters
+
+It uses a loop to accumulate characters until it finds the closing quote.
+
+### Recursive Structures
+
+**Arrays** and **objects** require recursive parsing since they can contain nested JSON values.
+
+#### Arrays
+
+The `jsonArray` parser:
+1. Uses `between()` to match opening `[` and closing `]`
+2. Uses `sepBy()` to parse comma-separated values
+3. Each value is recursively parsed with `jsonValue`
+
+#### Objects
+
+The `jsonObject` parser:
+1. Matches opening `{` and closing `}`
+2. Parses key-value pairs where keys are strings
+3. Uses `sepBy()` for comma-separated pairs
+4. Converts pairs to a JavaScript object with `Object.fromEntries()`
+
+### The Lazy Combinator
+
+`Parser.lazy()` is crucial for handling recursion. Without it, JavaScript would try to evaluate `jsonArray` and `jsonObject` before they're defined, causing a reference error.
+
+```typescript
+const jsonValue: Parser<any> = Parser.lazy(() =>
+  or(jsonNull, jsonBool, jsonNumber, jsonString, jsonArray, jsonObject)
+);
+```
+
+## Usage Example
+
+```typescript
+const testInput = `{
+  "name": "parserator",
+  "version": "0.1.41",
+  "numbers": [1, 2, 3, 4.5, -6.7e-8],
+  "nested": {
+    "bool": true,
+    "null": null,
+    "string": "hello \\"world\\""
+  }
+}`;
+
+const result = json.parseOrThrow(testInput);
+console.log(result);
+```
+
+### Output
+
+```json
+{
+  "name": "parserator",
+  "version": "0.1.41",
+  "numbers": [1, 2, 3, 4.5, -6.7e-8],
+  "nested": {
+    "bool": true,
+    "null": null,
+    "string": "hello \"world\""
+  }
+}
+```
+
+## Key Takeaways
+
+1. **Composition**: Simple parsers combine to build complex ones
+2. **Recursion**: Use `Parser.lazy()` for self-referential structures
+3. **Whitespace handling**: The `token()` helper trims leading whitespace
+4. **Generator syntax**: The `parser()` function enables imperative-style parsing
+5. **Transformation**: Use `.map()` to convert parsed strings to appropriate types

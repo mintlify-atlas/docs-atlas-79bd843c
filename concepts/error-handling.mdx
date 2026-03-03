@@ -1,0 +1,385 @@
+---
+title: Error Handling
+description: Understanding parse errors, formatting, and error recovery
+---
+
+## Error Types
+
+Parserator provides detailed, structured error information through the `ParseError` type:
+
+```typescript
+type ParseError =
+  | ExpectedParseError
+  | UnexpectedParseError
+  | CustomParseError
+  | FatalParseError
+```
+
+### Expected Errors
+
+Generated when specific tokens or patterns were expected:
+
+```typescript
+type ExpectedParseError = {
+  tag: "Expected";
+  span: Span;           // Location of error
+  items: string[];      // What was expected
+  found?: string;       // What was actually found
+  context: string[];    // Parsing context stack
+}
+```
+
+```typescript
+char('(').parse("}");
+// Expected: ["("]
+// Found: "}"
+```
+
+### Unexpected Errors
+
+Generated when unexpected input was encountered:
+
+```typescript
+type UnexpectedParseError = {
+  tag: "Unexpected";
+  span: Span;
+  found: string;        // What was found
+  hints?: string[];     // Suggestions for the user
+  context: string[];
+}
+```
+
+### Custom Errors
+
+Generated with custom error messages:
+
+```typescript
+type CustomParseError = {
+  tag: "Custom";
+  span: Span;
+  message: string;      // Custom error message
+  hints?: string[];     // Optional hints
+  context: string[];
+}
+```
+
+### Fatal Errors
+
+Non-recoverable errors that prevent backtracking:
+
+```typescript
+type FatalParseError = {
+  tag: "Fatal";
+  span: Span;
+  message: string;
+  context: string[];
+}
+```
+
+## ParseErrorBundle
+
+Multiple errors are collected in a `ParseErrorBundle`:
+
+```typescript
+class ParseErrorBundle {
+  constructor(
+    public errors: ParseError[],
+    public source: string
+  )
+  
+  // The furthest error (usually most relevant)
+  get primary(): ParseError
+  
+  // All errors at the furthest position
+  get primaryErrors(): ParseError[]
+  
+  // Simple string representation
+  toString(): string
+  
+  // Formatted error with source context
+  format(format?: "plain" | "ansi" | "html" | "json"): string
+}
+```
+
+## Error Formatting
+
+### Plain Text
+
+```typescript
+const result = parser.parseOrError(input);
+if (result instanceof ParseErrorBundle) {
+  console.log(result.format("plain"));
+}
+```
+
+Output:
+```
+Error at line 2, column 5:
+    1 | function add(x, y) {
+  >   2 |   return x + y
+    3 | }
+        ^
+Expected: ; or }
+```
+
+### ANSI Colors (Terminal)
+
+```typescript
+console.error(result.format("ansi"));
+```
+
+Output with syntax highlighting and colored error indicators.
+
+### HTML
+
+```typescript
+const html = result.format("html");
+// Returns HTML with CSS classes for styling
+```
+
+### JSON
+
+```typescript
+const json = result.format("json");
+// Returns structured JSON for programmatic consumption
+```
+
+## Custom Error Messages with expect()
+
+The `expect()` method provides custom error messages:
+
+```typescript
+const expect: (description: string) => Parser<T>
+```
+
+```typescript
+const email = parser(function* () {
+  const username = yield* many1(or(alphabet, digit, char(".")));
+  yield* char("@").expect("@ symbol");
+  const domain = yield* many1(or(alphabet, digit)).expect("domain name");
+  yield* char(".").expect("dot before TLD");
+  const tld = yield* many1(alphabet).expect("top-level domain");
+  
+  return { username: username.join(""), domain, tld: tld.join("") };
+});
+```
+
+Input: `user.domain.com`
+
+Output:
+```
+Error at line 1, column 5:
+  user.domain.com
+      ^
+Expected @ symbol
+```
+
+## Controlling Backtracking with commit()
+
+The `commit()` function prevents backtracking in choice combinators, leading to better error messages:
+
+```typescript
+const commit: () => Parser<void>
+```
+
+### Without commit()
+
+```typescript
+const statement = or(
+  ifStatement,
+  whileStatement,
+  forStatement
+);
+```
+
+Input: `if (x > 5 { }`  (missing closing paren)
+
+Error: `Expected if, while, or for`  ❌ Not helpful!
+
+### With commit()
+
+```typescript
+const ifStatement = parser(function* () {
+  yield* keyword("if");
+  yield* commit();  // Once we see "if", we know it's an if statement
+  yield* char('(').expect("opening parenthesis after 'if'");
+  const condition = yield* expression;
+  yield* char(')').expect("closing parenthesis");
+  const body = yield* block;
+  return { type: "if", condition, body };
+});
+```
+
+Input: `if (x > 5 { }`
+
+Error: `Expected closing parenthesis`  ✅ Much better!
+
+### When to Use commit()
+
+Use `commit()` when:
+- You've identified the type of construct being parsed (e.g., after a keyword)
+- Backtracking would produce confusing error messages
+- You want to fail fast with a specific error
+
+```typescript
+const jsonValue = parser(function* () {
+  const first = yield* anyChar();
+  
+  if (first === '{') {
+    yield* commit();  // Definitely parsing an object
+    return yield* jsonObject;
+  } else if (first === '[') {
+    yield* commit();  // Definitely parsing an array
+    return yield* jsonArray;
+  }
+  // ...
+});
+```
+
+Alias: `cut()`
+
+## Atomic Parsing
+
+The `atomic()` combinator makes parsing all-or-nothing:
+
+```typescript
+const atomic: <T>(parser: Parser<T>) => Parser<T>
+```
+
+If the parser fails, the input position is reset to before the atomic parser started:
+
+```typescript
+const keyword = (word: string) => 
+  atomic(string(word).thenDiscard(notFollowedBy(alphanumeric)));
+
+const ifKeyword = keyword("if");
+
+ifKeyword.parse("if ");     // succeeds
+ifKeyword.parse("iffy");    // fails, and no input is consumed
+```
+
+Useful for:
+- Preventing partial consumption in choice combinators
+- Lookahead-style parsing
+- Trying complex alternatives cleanly
+
+## Span Information
+
+Every error includes a `Span` indicating its location:
+
+```typescript
+type Span = {
+  offset: number;   // Byte offset from start (0-indexed)
+  length: number;   // Length of the span in bytes
+  line: number;     // Line number (1-indexed)
+  column: number;   // Column number (1-indexed)
+}
+```
+
+You can get span information for successful parses too:
+
+```typescript
+const spannedValue = number().spanned();
+const result = spannedValue.parse("42");
+// Result: [42, { offset: 0, length: 2, line: 1, column: 1 }]
+```
+
+## Context Stack
+
+Parserator tracks parsing context for better error messages. The `label()` method adds context:
+
+```typescript
+const expression = or(
+  binaryOp.label("binary operation"),
+  functionCall.label("function call"),
+  literal.label("literal value")
+);
+```
+
+Errors will include the context stack:
+
+```
+Error at line 3, column 10:
+  Expected: identifier
+  Context: function call > argument list > expression
+```
+
+## Error Recovery
+
+While Parserator doesn't have built-in error recovery, you can implement it using `or()` and custom parsers:
+
+```typescript
+const statement = or(
+  validStatement,
+  // Recovery: skip to next semicolon
+  skipUntil(char(';')).then(char(';')).map(() => ({ type: "error" }))
+);
+
+const program = many(statement);
+// Continues parsing after errors
+```
+
+## Creating Custom Errors
+
+You can create custom errors using `Parser.fatal()` or `Parser.fail()`:
+
+```typescript
+const positiveNumber = number().flatMap(n =>
+  n > 0 
+    ? Parser.lift(n)
+    : Parser.fatal("Number must be positive")
+);
+
+positiveNumber.parse("-5");
+// Fatal: Number must be positive
+```
+
+## Error Hints and Suggestions
+
+Parserator can provide intelligent error suggestions. The error formatter automatically includes hints when appropriate:
+
+```typescript
+const result = parser.parseOrError("functino main() {}");
+if (result instanceof ParseErrorBundle) {
+  console.log(result.format("ansi"));
+}
+```
+
+Output:
+```
+Error at line 1, column 1:
+  functino main() {}
+  ^
+Expected: function keyword
+
+Did you mean: function?
+```
+
+The error formatter uses Levenshtein distance to suggest corrections for common typos.
+
+## Best Practices
+
+1. **Use `.expect()` for user-facing errors**
+   ```typescript
+   char(')').expect("closing parenthesis")
+   ```
+
+2. **Use `commit()` after identifying constructs**
+   ```typescript
+   keyword("if").then(commit())
+   ```
+
+3. **Provide context with `.label()`**
+   ```typescript
+   expression.label("expression")
+   ```
+
+4. **Use `atomic()` for clean alternatives**
+   ```typescript
+   or(atomic(complexParser), simpleParser)
+   ```
+
+5. **Format errors appropriately for your context**
+   - Use `"ansi"` for CLI tools
+   - Use `"html"` for web editors
+   - Use `"json"` for APIs

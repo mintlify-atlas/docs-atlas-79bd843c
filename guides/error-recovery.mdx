@@ -1,0 +1,307 @@
+---
+title: Error Recovery and Messages
+description: Learn how to improve error messages and control backtracking with commit, expect, and atomic
+---
+
+Good error messages are crucial for parser usability. This guide shows you how to provide clear, actionable error messages and control how your parser recovers from failures.
+
+## Adding Context with .expect()
+
+By default, parserator gives low-level errors like "Expected 'a'". Use `.expect()` to provide semantic meaning:
+
+### Before and After
+
+<Tabs>
+  <Tab title="Without .expect()">
+    ```typescript
+    import { parser, char, many1, digit } from 'parserator';
+
+    const phoneNumber = parser(function* () {
+      yield* char('(');
+      const areaCode = yield* many1(digit);
+      yield* char(')');
+      yield* char(' ');
+      const exchange = yield* many1(digit);
+      yield* char('-');
+      const number = yield* many1(digit);
+      return `(${areaCode.join('')}) ${exchange.join('')}-${number.join('')}`;
+    });
+
+    phoneNumber.parse('(abc) 123-4567');
+    // ❌ Error: Expected digit, but got 'a'
+    ```
+  </Tab>
+  <Tab title="With .expect()">
+    ```typescript
+    import { parser, char, many1, digit } from 'parserator';
+
+    const phoneNumber = parser(function* () {
+      yield* char('(');
+      const areaCode = yield* many1(digit).expect('area code');
+      yield* char(')');
+      yield* char(' ');
+      const exchange = yield* many1(digit).expect('exchange');
+      yield* char('-');
+      const number = yield* many1(digit).expect('number');
+      return `(${areaCode.join('')}) ${exchange.join('')}-${number.join('')}`;
+    });
+
+    phoneNumber.parse('(abc) 123-4567');
+    // ✓ Error: Expected area code
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Use `.expect()` on complex parsers to give users meaningful feedback about what went wrong.
+</Tip>
+
+## Preventing Backtracking with .commit()
+
+By default, when a parser in a choice fails, the parser tries the next alternative. Use `.commit()` to prevent backtracking once you've identified what you're parsing:
+
+### Without commit()
+
+```typescript
+import { or, parser, string, char } from 'parserator';
+
+const statement = or(
+  parser(function* () {
+    yield* string('if');
+    yield* char('(');
+    // ... rest of if statement
+  }),
+  parser(function* () {
+    yield* string('while');
+    yield* char('(');
+    // ... rest of while statement
+  }),
+  parser(function* () {
+    // ... assignment
+  })
+);
+
+statement.parse('if x > 5 {}');
+// ❌ Error: Expected if, while, or assignment
+// (Tried all alternatives because if parser failed on missing '(')
+```
+
+### With commit()
+
+```typescript
+import { or, parser, string, char, commit } from 'parserator';
+
+const ifStatement = parser(function* () {
+  yield* string('if');
+  yield* commit(); // We know it's an if statement now!
+  yield* char('(').expect('opening parenthesis after "if"');
+  // ... rest of if statement
+});
+
+const statement = or(ifStatement, whileStatement, assignment);
+
+statement.parse('if x > 5 {}');
+// ✓ Error: Expected opening parenthesis after "if"
+// (Much clearer - we know we're parsing an if statement)
+```
+
+<Note>
+Use `.commit()` after parsing a keyword or distinctive token that uniquely identifies what you're parsing.
+</Note>
+
+## Method vs Function
+
+You can use `commit()` as either a method or a standalone parser:
+
+```typescript
+import { string, commit } from 'parserator';
+
+// As a method
+const p1 = string('if').commit();
+
+// As a standalone parser (in generator functions)
+const p2 = parser(function* () {
+  yield* string('if');
+  yield* commit();
+  // ...
+});
+```
+
+## All-or-Nothing Parsing with .atomic()
+
+Sometimes you want to try a complex parser, but if it fails, you want to reset to the original position. Use `.atomic()` for "all-or-nothing" parsing:
+
+```typescript
+import { or, parser, string, char } from 'parserator';
+
+// Without atomic - partial consumption
+const badParser = parser(function* () {
+  yield* string('function');
+  yield* char('('); // If this fails, 'function' was already consumed
+});
+
+// With atomic - no consumption on failure  
+const goodParser = parser(function* () {
+  yield* string('function');
+  yield* char('(');
+}).atomic();
+
+const keyword = or(
+  goodParser,
+  string('const'),
+  string('let')
+);
+
+keyword.parse('const');
+// ✓ With atomic: succeeds with 'const'
+// ✗ Without atomic: might fail because 'function' partially matched
+```
+
+### When to Use atomic()
+
+<Steps>
+  <Step title="Trying complex alternatives">
+    When you have multiple complex parsers in a choice and want clean fallback.
+  </Step>
+  <Step title="Lookahead without consumption">
+    When you want to peek ahead without committing to consuming input.
+  </Step>
+  <Step title="Transaction-like parsing">
+    When you want "all or nothing" behavior for a complex parser.
+  </Step>
+</Steps>
+
+## Error Message Best Practices
+
+### 1. Use Semantic Names
+
+```typescript
+// ❌ Bad
+const email = parser(function* () {
+  const username = yield* many1(or(alphabet, digit));
+  yield* char('@');
+  const domain = yield* many1(alphabet);
+  yield* char('.');
+  const tld = yield* many1(alphabet);
+  return { username: username.join(''), domain, tld };
+});
+
+// ✓ Good
+const email = parser(function* () {
+  const username = yield* many1(or(alphabet, digit, char('.'))).expect('username');
+  yield* char('@').expect('@');
+  const domain = yield* many1(or(alphabet, digit))
+    .map(chars => chars.join(''))
+    .expect('domain name');
+  yield* char('.').expect('.');
+  const tld = yield* many1(alphabet)
+    .map(chars => chars.join(''))
+    .expect('top-level domain (TLD)');
+  return { username: username.join(''), domain: domain + '.' + tld };
+});
+```
+
+### 2. Commit After Keywords
+
+```typescript
+// ✓ Good - commit after identifying the construct
+const functionDecl = parser(function* () {
+  yield* string('function');
+  yield* commit(); // Now we know it's a function
+  const name = yield* identifier.expect('function name');
+  yield* char('(').expect('opening parenthesis');
+  // ...
+});
+```
+
+### 3. Use atomic() for Alternatives
+
+```typescript
+// ✓ Good - each alternative is all-or-nothing
+const value = or(
+  complexExpression.atomic(),
+  simpleLiteral.atomic(),
+  identifier
+);
+```
+
+## Example: Coordinate Parser with Good Errors
+
+From `examples/points.ts`, here's a well-structured parser:
+
+```typescript
+import { parser, char, string, many1, digit } from 'parserator';
+
+const number = many1(digit).map(digits => parseInt(digits.join('')));
+
+// Parse coordinates like "(10, 20)"
+const coordinate = parser(function* () {
+  yield* char('(').expect('opening parenthesis \'('\'');
+  const x = yield* number;
+  yield* string(', ').expect('comma between coordinates');
+  const y = yield* number;
+  yield* char(')').expect('closing parenthesis \')\'');
+  return { x, y };
+});
+
+coordinate.parse('(10, 20)');  // ✓ { x: 10, y: 20 }
+coordinate.parse('(70, 80');   // ✗ Expected closing parenthesis ')'
+coordinate.parse('90, 100)');  // ✗ Expected opening parenthesis '('
+```
+
+## Context-Aware Errors
+
+Error messages should guide users to fix the problem. Compare these:
+
+<Tabs>
+  <Tab title="Generic Error">
+    ```typescript
+    const parser = parser(function* () {
+      yield* char('{');
+      const content = yield* many(jsonValue);
+      yield* char('}');
+      return content;
+    });
+
+    parser.parse('{ "key": "value" ]');
+    // ❌ Error: Expected '}'
+    // (Not helpful - user might not know why)
+    ```
+  </Tab>
+  <Tab title="Contextual Error">
+    ```typescript
+    const parser = parser(function* () {
+      yield* char('{');
+      const content = yield* sepBy(keyValue, char(','));
+      yield* char('}').expect('closing brace for object');
+      return Object.fromEntries(content);
+    });
+
+    parser.parse('{ "key": "value" ]');
+    // ✓ Error: Expected closing brace for object
+    // (Clearer - user knows they're in an object context)
+    ```
+  </Tab>
+</Tabs>
+
+## Summary
+
+<Steps>
+  <Step title="Use .expect() for semantic errors">
+    Replace low-level errors with user-friendly descriptions.
+  </Step>
+  <Step title="Use .commit() to prevent backtracking">
+    Once you've identified what you're parsing, commit to that path.
+  </Step>
+  <Step title="Use .atomic() for clean alternatives">
+    Make complex alternatives all-or-nothing to avoid partial consumption.
+  </Step>
+  <Step title="Provide context in error messages">
+    Help users understand where they are in the parse and what went wrong.
+  </Step>
+</Steps>
+
+## Next Steps
+
+- [Performance](/guides/performance) - Optimize your parsers for speed
+- [API Reference](/api/combinators) - Explore all available combinators

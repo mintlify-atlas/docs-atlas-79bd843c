@@ -1,0 +1,273 @@
+---
+title: Parsers
+description: Understanding the Parser<T> type and its core methods
+---
+
+## What is a Parser?
+
+A `Parser<T>` is the fundamental building block of Parserator. It represents a function that:
+- Takes an input string and a parser state
+- Either succeeds with a value of type `T`, or
+- Fails with detailed error information
+
+Parsers are immutable and composable, allowing you to build complex parsers from simple ones.
+
+## The Parser Type
+
+```typescript
+class Parser<T> {
+  run(state: ParserState): ParserOutput<T>
+}
+```
+
+The generic type `T` represents the type of value this parser produces when successful.
+
+## Core Types
+
+### ParserState
+
+Represents the current parsing position and context:
+
+```typescript
+type ParserState = {
+  source: string;        // The complete input string
+  offset: number;        // Current byte offset (0-indexed)
+  line: number;          // Current line number (1-indexed)
+  column: number;        // Current column number (1-indexed)
+  debug?: boolean;       // Enable debug mode
+  labelStack?: string[]; // Context labels for error reporting
+  committed?: boolean;   // Whether parser has committed to this path
+}
+```
+
+### ParserOutput
+
+Contains both the updated state and the parsing result:
+
+```typescript
+type ParserOutput<T> = {
+  state: ParserState;
+  result: Either<T, ParseErrorBundle>;
+}
+```
+
+The `result` field uses an `Either` type:
+- `Either.right(value)` for success
+- `Either.left(errorBundle)` for failure
+
+## Running Parsers
+
+### parse()
+
+Runs the parser and returns the full `ParserOutput`:
+
+```typescript
+const parser = string("hello");
+const output = parser.parse("hello world");
+// output.result contains Either.right("hello")
+// output.state contains remaining input " world" and position info
+```
+
+### parseOrError()
+
+Returns either the parsed value or a `ParseErrorBundle`:
+
+```typescript
+const parser = number();
+const result = parser.parseOrError("42");
+if (result instanceof ParseErrorBundle) {
+  console.error(result.format());
+} else {
+  console.log(result); // 42
+}
+```
+
+### parseOrThrow()
+
+Returns the parsed value or throws a `ParseErrorBundle`:
+
+```typescript
+const parser = number();
+try {
+  const value = parser.parseOrThrow("42");
+  console.log(value); // 42
+} catch (error) {
+  if (error instanceof ParseErrorBundle) {
+    console.error(error.format());
+  }
+}
+```
+
+## Transforming Parsers
+
+### map()
+
+Transforms the parsed value using a function:
+
+```typescript
+// Parse a number and double it
+const doubled = number().map(n => n * 2);
+doubled.parse("21"); // succeeds with 42
+
+// Parse a string and get its length
+const stringLength = quoted('"').map(s => s.length);
+stringLength.parse('"hello"'); // succeeds with 5
+
+// Chain multiple transformations
+const parser = identifier()
+  .map(s => s.toUpperCase())
+  .map(s => ({ name: s }));
+parser.parse("hello"); // succeeds with { name: "HELLO" }
+```
+
+### flatMap()
+
+Chains parsers where the next parser depends on the previous result:
+
+```typescript
+// Parse a number and then that many 'a' characters
+const parser = number().flatMap(n =>
+  string('a'.repeat(n))
+);
+parser.parse("3aaa"); // succeeds with "aaa"
+
+// Parse a type annotation and return appropriate parser
+const typeParser = identifier().flatMap(type => {
+  switch(type) {
+    case "int": return number();
+    case "string": return quoted('"');
+    default: return Parser.fatal(`Unknown type: ${type}`);
+  }
+});
+
+// Validate parsed values
+const positiveNumber = number().flatMap(n =>
+  n > 0
+    ? Parser.lift(n)
+    : Parser.fatal("Expected positive number")
+);
+```
+
+## Sequencing Parsers
+
+### zip()
+
+Combines two parsers and returns both results as a tuple:
+
+```typescript
+// Parse a coordinate pair
+const coordinate = number().zip(number().trimLeft(comma));
+coordinate.parse("10, 20"); // succeeds with [10, 20]
+
+// Parse a key-value pair
+const keyValue = identifier().zip(number().trimLeft(colon));
+keyValue.parse("age:30"); // succeeds with ["age", 30]
+```
+
+### then()
+
+Runs two parsers in sequence, keeping only the second result:
+
+```typescript
+// Parse a value after a label
+const labeledValue = string("value:").then(number());
+labeledValue.parse("value:42"); // succeeds with 42
+
+// Skip whitespace before parsing
+const trimmedNumber = whitespace().then(number());
+trimmedNumber.parse("   123"); // succeeds with 123
+```
+
+Alias: `zipRight()`
+
+### thenDiscard()
+
+Runs two parsers in sequence, keeping only the first result:
+
+```typescript
+// Parse a statement and discard the semicolon
+const statement = expression().thenDiscard(char(';'));
+statement.parse("x + 1;"); // succeeds with the expression
+
+// Parse array elements and discard separators
+const element = number().thenDiscard(optional(char(',')));
+```
+
+Alias: `zipLeft()`
+
+## Trimming Whitespace
+
+Parsers have built-in methods for handling surrounding content:
+
+```typescript
+// Remove whitespace on both sides
+const trimmed = identifier().trim(whitespace);
+
+// Remove whitespace on the left only
+const leftTrimmed = identifier().trimLeft(whitespace);
+
+// Remove whitespace on the right only
+const rightTrimmed = identifier().trimRight(whitespace);
+```
+
+## Creating Parsers
+
+### Parser.lift()
+
+Creates a parser that always succeeds with the given value:
+
+```typescript
+const always42 = Parser.lift(42);
+always42.parse("any input"); // succeeds with 42
+
+// Useful for providing default values
+const parseNumberOrDefault = number.or(Parser.lift(0));
+```
+
+Alias: `Parser.pure()`
+
+### Parser.lazy()
+
+Creates a parser that is evaluated lazily, useful for recursive parsers:
+
+```typescript
+const parens: Parser<string> = Parser.lazy(() =>
+  between(
+    char('('),
+    char(')'),
+    parens
+  )
+);
+```
+
+### Parser.fatal()
+
+Creates a parser that always fails with a fatal error:
+
+```typescript
+const positiveNumber = number().flatMap(n =>
+  n > 0 ? Parser.lift(n) : Parser.fatal("Expected positive number")
+);
+```
+
+## Position Tracking
+
+Parsers automatically track position information for error reporting. The `spanned()` method captures both the value and its span:
+
+```typescript
+const spannedNumber = number().spanned();
+const result = spannedNumber.parse("42");
+// Returns: [42, { offset: 0, length: 2, line: 1, column: 1 }]
+```
+
+## Debugging
+
+The `tap()` method allows you to observe parsing without affecting the result:
+
+```typescript
+const parser = identifier()
+  .tap(({ state, result }) => {
+    console.log(`At position ${state.offset}, parsed:`, result);
+  })
+  .map(s => s.toUpperCase());
+```

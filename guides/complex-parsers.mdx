@@ -1,0 +1,319 @@
+---
+title: Building Complex Parsers
+description: Learn how to build complex parsers using composition, recursion, and advanced combinators
+---
+
+Once you've mastered basic parsers, you can combine them to parse complex nested structures. This guide covers composition patterns, recursive parsers, and real-world examples.
+
+## Parser Composition
+
+Parsers are built by composing smaller parsers together. The key combinators are:
+
+- `parser(function* () { ... })` - Sequence parsers with generator syntax
+- `or()` - Try alternatives
+- `sepBy()` - Parse lists with separators
+- `between()` - Parse content between delimiters
+
+### Email Parser
+
+Here's a real example from `examples/email.ts` that parses email addresses:
+
+```typescript
+import { alphabet, char, digit, many1, or, parser } from 'parserator';
+
+const email = parser(function* () {
+  // Parse username (letters, digits, dots)
+  const username = yield* many1(or(alphabet, digit, char('.'))).expect('username');
+  
+  yield* char('@').expect('@');
+  
+  // Parse domain name
+  const domain = yield* many1(or(alphabet, digit))
+    .map(chars => chars.join(''))
+    .expect('domain name');
+  
+  yield* char('.').expect('.');
+  
+  // Parse top-level domain
+  const tld = yield* many1(alphabet)
+    .map(chars => chars.join(''))
+    .expect('top-level domain (TLD)');
+
+  return { username: username.join(''), domain: domain + '.' + tld };
+});
+
+email.parse('john.doe@example.com');
+// ✓ { username: 'john.doe', domain: 'example.com' }
+```
+
+<Note>
+The `.expect()` method provides semantic error messages. Instead of "Expected 'a'", you get "Expected username".
+</Note>
+
+### Phone Number Parser
+
+From `examples/phone-number.ts`, here's a parser for formatted phone numbers:
+
+```typescript
+import { char, digit, many1, parser } from 'parserator';
+
+const phoneNumber = parser(function* () {
+  yield* char('(');
+  const areaCode = yield* many1(digit).expect('area code');
+  yield* char(')');
+  yield* char(' ');
+  const exchange = yield* many1(digit).expect('exchange');
+  yield* char('-');
+  const number = yield* many1(digit).expect('number');
+
+  return `(${areaCode.join('')}) ${exchange.join('')}-${number.join('')}`;
+});
+
+phoneNumber.parse('(555) 123-4567');
+// ✓ '(555) 123-4567'
+```
+
+## Parsing Lists with sepBy
+
+The `sepBy` combinator parses zero or more elements separated by a delimiter:
+
+```typescript
+import { char, sepBy, digit, many1 } from 'parserator';
+
+const number = many1(digit).map(d => parseInt(d.join('')));
+const comma = char(',');
+
+const numberList = sepBy(number, comma);
+
+numberList.parse('1,2,3,4,5'); // ✓ [1, 2, 3, 4, 5]
+numberList.parse('');          // ✓ [] (empty is valid)
+numberList.parse('42');        // ✓ [42] (single element)
+```
+
+Use `sepBy1` when you need at least one element:
+
+```typescript
+import { sepBy1 } from 'parserator';
+
+const nonEmptyList = sepBy1(number, comma);
+
+nonEmptyList.parse('1,2,3'); // ✓ [1, 2, 3]
+nonEmptyList.parse('');      // ✗ fails (needs at least one)
+```
+
+## Using between for Delimiters
+
+The `between` combinator parses content between opening and closing delimiters:
+
+```typescript
+import { between, char, string, many } from 'parserator';
+
+const quoted = between(
+  char('"'),
+  char('"'),
+  many(alphabet).map(chars => chars.join(''))
+);
+
+quoted.parse('"hello"'); // ✓ 'hello'
+
+const bracketed = between(
+  char('['),
+  char(']'),
+  sepBy(number, char(','))
+);
+
+bracketed.parse('[1,2,3]'); // ✓ [1, 2, 3]
+```
+
+## Recursive Parsers with Parser.lazy()
+
+To parse nested structures like JSON, you need recursive parsers. Use `Parser.lazy()` to define parsers that reference themselves:
+
+```typescript
+import { Parser, or, string, char, sepBy, between, parser } from 'parserator';
+
+// Forward declaration - parser defined later
+const jsonValue: Parser<any> = Parser.lazy(() =>
+  or(jsonNull, or(jsonBool, or(jsonNumber, or(jsonString, or(jsonArray, jsonObject)))))
+);
+
+const jsonNull = string('null').map(() => null);
+const jsonBool = or(
+  string('true').map(() => true),
+  string('false').map(() => false)
+);
+const jsonNumber = regex(/-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/)
+  .map(Number);
+const jsonString = /* ... string parser ... */;
+
+// Array can contain any JSON value (including nested arrays)
+const jsonArray: Parser<any[]> = between(
+  char('['),
+  char(']'),
+  sepBy(jsonValue, char(','))
+);
+
+// Object can contain any JSON value
+const jsonObject: Parser<Record<string, any>> = parser(function* () {
+  yield* char('{');
+  const pairs = yield* sepBy(
+    parser(function* () {
+      const key = yield* jsonString;
+      yield* char(':');
+      const value = yield* jsonValue; // Recursive!
+      return [key, value] as const;
+    }),
+    char(',')
+  );
+  yield* char('}');
+  return Object.fromEntries(pairs);
+});
+```
+
+This example is simplified from `examples/json-parser.ts`.
+
+<Warning>
+Always use `Parser.lazy()` for recursive parsers! Otherwise you'll get "Cannot access variable before initialization" errors.
+</Warning>
+
+## Whitespace Handling in Complex Parsers
+
+Real-world formats often have flexible whitespace. Use the `token` pattern:
+
+```typescript
+import { regex, Parser, skipSpaces } from 'parserator';
+
+// Wrap any parser to skip leading whitespace
+function token<T>(p: Parser<T>): Parser<T> {
+  return skipSpaces.then(p);
+}
+
+// Now use token() to make parsers whitespace-insensitive
+const jsonArray = between(
+  token(char('[')),
+  token(char(']')),
+  sepBy(token(jsonValue), token(char(',')))
+);
+
+// This now handles arbitrary whitespace:
+jsonArray.parse('[  1  ,  2  ,  3  ]'); // ✓ [1, 2, 3]
+```
+
+## Real Example: JSON Parser
+
+Here's the complete structure from `examples/json-parser.ts`:
+
+<Tabs>
+  <Tab title="Full Parser">
+    ```typescript
+    import { parser, char, string, regex, or, many, sepBy, between, Parser, skipSpaces } from 'parserator';
+
+    const whitespace = regex(/\s*/);
+    function token<T>(p: Parser<T>): Parser<T> {
+      return p.trimLeft(whitespace);
+    }
+
+    const jsonNull = string('null').map(() => null);
+    const jsonTrue = string('true').map(() => true);
+    const jsonFalse = string('false').map(() => false);
+    const jsonBool = or(jsonTrue, jsonFalse);
+
+    const jsonNumber = regex(/-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/).map(Number);
+
+    const jsonString = parser(function* () {
+      yield* char('"');
+      const chars: string[] = [];
+      
+      while (true) {
+        const next = yield* or(
+          string('\\"').map(() => '"'),
+          string('\\\\').map(() => '\\'),
+          string('\\/').map(() => '/'),
+          string('\\b').map(() => '\b'),
+          string('\\f').map(() => '\f'),
+          string('\\n').map(() => '\n'),
+          string('\\r').map(() => '\r'),
+          string('\\t').map(() => '\t'),
+          regex(/\\u[0-9a-fA-F]{4}/).map(s => String.fromCharCode(parseInt(s.slice(2), 16))),
+          regex(/[^"\\]+/),
+          char('"').map(() => null)
+        );
+        
+        if (next === null) break;
+        chars.push(next);
+      }
+      
+      return chars.join('');
+    });
+
+    const jsonValue: Parser<any> = Parser.lazy(() =>
+      or(jsonNull, jsonBool, jsonNumber, jsonString, jsonArray, jsonObject)
+    );
+
+    const jsonArray: Parser<any[]> = between(
+      token(char('[')),
+      token(char(']')),
+      sepBy(token(jsonValue), token(char(',')))
+    );
+
+    const jsonObject: Parser<Record<string, any>> = parser(function* () {
+      yield* token(char('{'));
+      
+      const pairs = yield* sepBy(
+        parser(function* () {
+          const key = yield* token(jsonString);
+          yield* token(char(':'));
+          const value = yield* token(jsonValue);
+          return [key, value] as const;
+        }),
+        token(char(','))
+      );
+      
+      yield* token(char('}'));
+      
+      return Object.fromEntries(pairs);
+    });
+
+    export const json = token(jsonValue);
+    ```
+  </Tab>
+  <Tab title="Usage">
+    ```typescript
+    const testInput = `{
+      "name": "parserator",
+      "version": "0.1.41",
+      "numbers": [1, 2, 3, 4.5, -6.7e-8],
+      "nested": {
+        "bool": true,
+        "null": null
+      }
+    }`;
+
+    const result = json.parseOrThrow(testInput);
+    console.log(result);
+    // ✓ Parsed successfully!
+    ```
+  </Tab>
+</Tabs>
+
+## Key Patterns
+
+<Steps>
+  <Step title="Use sepBy for lists">
+    `sepBy(element, separator)` handles comma-separated lists, space-separated tokens, etc.
+  </Step>
+  <Step title="Use between for brackets">
+    `between(open, close, content)` parses content inside delimiters like `()`, `[]`, `{}`.
+  </Step>
+  <Step title="Use Parser.lazy() for recursion">
+    Wrap recursive parser references in `Parser.lazy(() => ...)` to avoid initialization errors.
+  </Step>
+  <Step title="Create token helpers">
+    Make a `token()` helper to handle whitespace consistently across your parser.
+  </Step>
+</Steps>
+
+## Next Steps
+
+- [Error Recovery](/guides/error-recovery) - Add better error messages with `.expect()` and `.commit()`
+- [Performance](/guides/performance) - Optimize your parsers for speed

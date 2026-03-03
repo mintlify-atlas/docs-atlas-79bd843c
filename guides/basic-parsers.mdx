@@ -1,0 +1,185 @@
+---
+title: Building Basic Parsers
+description: Learn how to build simple parsers step by step, from characters to numbers and identifiers
+---
+
+This guide walks you through building basic parsers from the ground up. You'll learn how to parse individual characters, strings, and combine them to create more useful parsers.
+
+## Character Parsers
+
+The most fundamental parser is the character parser. It matches a single character:
+
+```typescript
+import { char } from 'parserator';
+
+const parseA = char('a');
+parseA.parse('abc'); // ✓ succeeds with 'a'
+parseA.parse('xyz'); // ✗ fails
+```
+
+You can also match any alphabetic character or digit:
+
+```typescript
+import { alphabet, digit } from 'parserator';
+
+const letter = alphabet;
+letter.parse('x'); // ✓ succeeds with 'x'
+
+const num = digit;
+num.parse('5'); // ✓ succeeds with '5'
+```
+
+## String Matching
+
+To match entire strings, use the `string` parser:
+
+```typescript
+import { string } from 'parserator';
+
+const hello = string('hello');
+hello.parse('hello world'); // ✓ succeeds with 'hello'
+hello.parse('hi there');    // ✗ fails
+```
+
+## Parsing Multiple Characters
+
+Use `many` to parse zero or more occurrences, or `many1` to require at least one:
+
+```typescript
+import { char, many, many1 } from 'parserator';
+
+// Zero or more 'a's
+const manyA = many(char('a'));
+manyA.parse('aaab'); // ✓ ['a', 'a', 'a']
+manyA.parse('bbb');  // ✓ [] (empty array is valid)
+
+// At least one 'a'
+const many1A = many1(char('a'));
+many1A.parse('aaab'); // ✓ ['a', 'a', 'a']
+many1A.parse('bbb');  // ✗ fails (needs at least one)
+```
+
+## Parsing Numbers
+
+Let's build a parser for positive integers by combining digits:
+
+```typescript
+import { digit, many1 } from 'parserator';
+
+// Parse one or more digits
+const digits = many1(digit);
+
+// Convert to a number
+const number = digits.map(chars => parseInt(chars.join('')));
+
+number.parse('123'); // ✓ 123
+number.parse('0');   // ✓ 0
+number.parse('abc'); // ✗ fails
+```
+
+<Tip>
+The `.map()` method transforms the parser's result. Here we convert an array of digit characters into a number.
+</Tip>
+
+## Parsing Identifiers
+
+Identifiers typically start with a letter and can contain letters, digits, or underscores:
+
+```typescript
+import { alphabet, or, digit, char, many, parser } from 'parserator';
+
+// Letter or underscore for the first character
+const identStart = or(alphabet, char('_'));
+
+// Letter, digit, or underscore for subsequent characters
+const identChar = or(alphabet, or(digit, char('_')));
+
+const identifier = parser(function* () {
+  const first = yield* identStart;
+  const rest = yield* many(identChar);
+  return first + rest.join('');
+});
+
+identifier.parse('user_id');  // ✓ 'user_id'
+identifier.parse('value123'); // ✓ 'value123'
+identifier.parse('_temp');    // ✓ '_temp'
+identifier.parse('123abc');   // ✗ fails (can't start with digit)
+```
+
+## Handling Whitespace
+
+Whitespace is common in most formats. Here's how to skip it:
+
+```typescript
+import { char, many, or } from 'parserator';
+
+// Parse one whitespace character
+const space = or(
+  char(' '),
+  or(char('\t'), or(char('\n'), char('\r')))
+);
+
+// Parse zero or more whitespace characters
+const whitespace = many(space).map(chars => chars.join(''));
+
+whitespace.parse('   '); // ✓ '   '
+whitespace.parse('');    // ✓ '' (empty is valid)
+```
+
+Trim whitespace around a parser:
+
+```typescript
+import { string, skipSpaces } from 'parserator';
+
+const keyword = string('function');
+const trimmed = skipSpaces.then(keyword).thenDiscard(skipSpaces);
+
+trimmed.parse('  function  '); // ✓ 'function'
+```
+
+## Parsing Coordinates Example
+
+Let's combine what we've learned to parse coordinate pairs like `(10, 20)`:
+
+```typescript
+import { parser, char, string, many1, digit } from 'parserator';
+
+const number = many1(digit).map(digits => parseInt(digits.join('')));
+
+// Parse coordinates like "(10, 20)"
+const coordinate = parser(function* () {
+  yield* char('(').expect('opening parenthesis');
+  const x = yield* number;
+  yield* string(', ').expect('comma between coordinates');
+  const y = yield* number;
+  yield* char(')').expect('closing parenthesis');
+  return { x, y };
+});
+
+coordinate.parse('(10, 20)'); // ✓ { x: 10, y: 20 }
+coordinate.parse('(30, 40)'); // ✓ { x: 30, y: 40 }
+```
+
+This example is from `examples/points.ts` in the parserator source.
+
+<Steps>
+  <Step title="Start simple">
+    Begin with character and string parsers for the basic building blocks.
+  </Step>
+  <Step title="Combine with many/many1">
+    Use repetition combinators to parse sequences of characters.
+  </Step>
+  <Step title="Transform results">
+    Use `.map()` to convert parsed values into the shape you need.
+  </Step>
+  <Step title="Sequence parsers">
+    Use the `parser` function with generator syntax to sequence multiple parsers.
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that you understand basic parsers, you can move on to:
+- [Complex Parsers](/guides/complex-parsers) - Learn about nested structures and recursion
+- [Error Recovery](/guides/error-recovery) - Improve error messages with `.expect()` and `.commit()`
+- [Performance](/guides/performance) - Optimize your parsers with specialized combinators

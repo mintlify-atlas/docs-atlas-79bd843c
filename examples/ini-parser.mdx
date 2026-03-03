@@ -1,0 +1,258 @@
+---
+title: "INI Parser"
+description: "Parse INI configuration files with sections and key-value pairs"
+---
+
+# INI Parser
+
+This example shows how to parse INI configuration files, which are commonly used for application settings. The parser handles sections, properties, comments, and various whitespace patterns.
+
+## INI File Format
+
+INI files consist of:
+- **Sections**: `[section_name]`
+- **Properties**: `key = value`
+- **Comments**: Lines starting with `;` or `#`
+- **Whitespace**: Spaces, tabs, and blank lines
+
+## Complete Implementation
+
+```typescript
+import {
+  atomic,
+  char,
+  commit,
+  eof,
+  many,
+  optional,
+  or,
+  Parser,
+  regex,
+  skipMany0,
+  string,
+  parser
+} from "parserator";
+
+// Whitespace and comment handling
+const whitespace = regex(/[ \t]+/).label("whitespace");
+const lineBreak = or(string("\r\n"), string("\n"), string("\r")).label(
+  "line break"
+);
+const blankLine = regex(/[ \t]*[\r\n]/).label("blank line");
+const comment = regex(/[;#][^\n\r]*/).label("comment");
+const space = or(whitespace, comment);
+const spaces = skipMany0(space);
+const spacesNewlines = skipMany0(or(space, lineBreak, blankLine));
+
+function token<T>(parser: Parser<T>): Parser<T> {
+  return parser.trimLeft(spaces);
+}
+
+// Type definitions
+type IniValue = {
+  type: "section";
+  name: string;
+  properties: Array<{ key: string; value: string }>;
+};
+
+type IniFile = IniValue[];
+
+// Property parsing
+const key = token(regex(/[a-zA-Z0-9_\-\.]+/).label("property key"));
+
+const value = regex(/[^\r\n]*/)
+  .map(s => s.trim())
+  .label("property value");
+
+const property = atomic(
+  parser(function* () {
+    const k = yield* key;
+    yield* token(char("="));
+    yield* commit();
+    const v = yield* value.expect("property value after '='");
+    return { key: k, value: v };
+  })
+);
+
+// Section parsing
+const section: Parser<IniValue> = atomic(
+  parser(function* () {
+    yield* spacesNewlines;
+    yield* token(char("["));
+    yield* commit();
+    const name = yield* regex(/[^\]]+/)
+      .map(s => s.trim())
+      .expect("section name");
+    yield* char("]").expect("closing bracket ']'");
+    yield* optional(lineBreak);
+
+    const properties = yield* many(
+      parser(function* () {
+        yield* spaces;
+        const prop = yield* property;
+        yield* optional(lineBreak);
+        yield* spacesNewlines;
+        return prop;
+      })
+    );
+
+    return {
+      type: "section" as const,
+      name,
+      properties
+    };
+  })
+);
+
+// Complete INI file parser
+const iniFile: Parser<IniFile> = parser(function* () {
+  yield* spacesNewlines;
+  const sections = yield* many(section);
+  yield* spacesNewlines;
+  yield* eof.expect("end of input");
+  return sections;
+});
+```
+
+## How It Works
+
+### Whitespace Handling
+
+The parser carefully distinguishes between different types of whitespace:
+
+- **Horizontal whitespace**: Spaces and tabs within a line
+- **Line breaks**: `\n`, `\r`, or `\r\n`
+- **Blank lines**: Lines containing only whitespace
+- **Comments**: Lines starting with `;` or `#`
+
+The `token()` helper automatically skips horizontal whitespace and comments before parsing.
+
+### Property Parsing
+
+Properties follow the pattern `key = value`:
+
+```typescript
+const property = atomic(
+  parser(function* () {
+    const k = yield* key;
+    yield* token(char("="));
+    yield* commit();
+    const v = yield* value.expect("property value after '='");
+    return { key: k, value: v };
+  })
+);
+```
+
+**Key features**:
+- Uses `commit()` after seeing `=` to provide better error messages
+- Wraps in `atomic()` to ensure the parser either fully succeeds or backtracks
+- Trims whitespace from values
+
+### Section Parsing
+
+Sections start with `[section_name]` and contain multiple properties:
+
+```typescript
+const section: Parser<IniValue> = atomic(
+  parser(function* () {
+    yield* spacesNewlines;
+    yield* token(char("["));
+    yield* commit();
+    const name = yield* regex(/[^\]]+/)
+      .map(s => s.trim())
+      .expect("section name");
+    yield* char("]").expect("closing bracket ']'");
+    yield* optional(lineBreak);
+
+    const properties = yield* many(
+      parser(function* () {
+        yield* spaces;
+        const prop = yield* property;
+        yield* optional(lineBreak);
+        yield* spacesNewlines;
+        return prop;
+      })
+    );
+
+    return { type: "section", name, properties };
+  })
+);
+```
+
+## Usage Example
+
+```typescript
+const testCase = `
+[database]
+host = localhost
+port = 5432
+user = admin
+; This is a comment
+password = secret123
+
+[cache]
+enabled = true
+ttl = 3600
+# Another comment style
+`;
+
+const result = iniFile.parse(testCase);
+
+if (Either.isRight(result.result)) {
+  console.log(JSON.stringify(result.result.right, null, 2));
+}
+```
+
+### Output
+
+```json
+[
+  {
+    "type": "section",
+    "name": "database",
+    "properties": [
+      { "key": "host", "value": "localhost" },
+      { "key": "port", "value": "5432" },
+      { "key": "user", "value": "admin" },
+      { "key": "password", "value": "secret123" }
+    ]
+  },
+  {
+    "type": "section",
+    "name": "cache",
+    "properties": [
+      { "key": "enabled", "value": "true" },
+      { "key": "ttl", "value": "3600" }
+    ]
+  }
+]
+```
+
+## Error Handling
+
+The parser provides helpful error messages:
+
+```typescript
+const formatter = new ErrorFormatter("ansi");
+
+if (Either.isLeft(result.result)) {
+  console.log(formatter.format(result.result.left));
+}
+```
+
+**Example error** for malformed input like `[database` (missing closing bracket):
+
+```
+Error at line 1, column 10:
+[database
+         ^
+Expected: closing bracket ']'
+```
+
+## Key Features
+
+1. **Flexible whitespace**: Handles various whitespace patterns gracefully
+2. **Comments**: Supports both `;` and `#` comment styles
+3. **Error recovery**: Uses `commit()` and `atomic()` for better error messages
+4. **Type safety**: Returns strongly-typed AST with sections and properties
+5. **Blank lines**: Allows arbitrary blank lines between sections and properties

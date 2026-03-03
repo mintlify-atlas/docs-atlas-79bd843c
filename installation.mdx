@@ -1,0 +1,158 @@
+---
+title: Installation
+description: Install Parserator and configure your TypeScript project
+---
+
+# Installation
+
+Get started with Parserator in seconds. Install the package and you're ready to build parsers.
+
+## Install the package
+
+Choose your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install parserator
+```
+
+```bash yarn
+yarn add parserator
+```
+
+```bash pnpm
+pnpm add parserator
+```
+
+```bash bun
+bun add parserator
+```
+
+</CodeGroup>
+
+## TypeScript requirements
+
+Parserator requires TypeScript 5.0 or higher for full type inference.
+
+<Note>
+  Parserator has `typescript@^5.0.0` as a peer dependency. Make sure your project uses TypeScript 5.0 or later to get the best type inference experience.
+</Note>
+
+If you haven't installed TypeScript yet:
+
+<CodeGroup>
+
+```bash npm
+npm install --save-dev typescript
+```
+
+```bash yarn
+yarn add --dev typescript
+```
+
+```bash pnpm
+pnpm add -D typescript
+```
+
+```bash bun
+bun add --dev typescript
+```
+
+</CodeGroup>
+
+## Verify installation
+
+Create a simple test file to verify everything works:
+
+```typescript test.ts
+import { parser, char, digit } from "parserator";
+
+const singleDigit = digit;
+const result = singleDigit.parseOrThrow("5");
+
+console.log(result); // "5"
+```
+
+Run it with your TypeScript runtime:
+
+<CodeGroup>
+
+```bash ts-node
+npx ts-node test.ts
+```
+
+```bash tsx
+npx tsx test.ts
+```
+
+```bash bun
+bun run test.ts
+```
+
+</CodeGroup>
+
+If you see `"5"` printed to the console, you're all set!
+
+## TypeScript configuration
+
+For the best experience, ensure your `tsconfig.json` includes these settings:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+<Note>
+  The `strict` flag is recommended to get the full benefits of TypeScript's type checking with Parserator's inferred types.
+</Note>
+
+## Import styles
+
+Parserator supports both named and wildcard imports:
+
+```typescript
+// Named imports (recommended)
+import { parser, char, string, many1, digit, or } from "parserator";
+
+// Wildcard import
+import * as P from "parserator";
+const myParser = P.parser(function* () {
+  yield* P.char("(");
+  // ...
+});
+```
+
+## Module formats
+
+Parserator is distributed as both ESM and CommonJS:
+
+```typescript
+// ESM (recommended)
+import { parser } from "parserator";
+
+// CommonJS
+const { parser } = require("parserator");
+```
+
+The package automatically uses the correct format based on your project configuration.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first parser with a step-by-step tutorial
+  </Card>
+  
+  <Card title="Core concepts" icon="book" href="/concepts/parsers">
+    Learn the fundamental concepts behind parser combinators
+  </Card>
+</CardGroup>

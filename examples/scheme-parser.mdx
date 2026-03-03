@@ -1,0 +1,381 @@
+---
+title: "Scheme Parser"
+description: "Build a Scheme/Lisp parser with support for special forms"
+---
+
+# Scheme Parser
+
+This example demonstrates a Scheme (Lisp dialect) parser that handles S-expressions, atoms, and special forms like `lambda`, `let`, and `if`. It showcases recursive parsing and AST construction for a functional programming language.
+
+## Scheme Syntax Overview
+
+Scheme uses S-expressions (symbolic expressions):
+- **Atoms**: Numbers, strings, booleans, symbols
+- **Lists**: `(operator arg1 arg2 ...)`
+- **Special forms**: `lambda`, `let`, `if`, `define`
+
+## AST Type Definitions
+
+```typescript
+export namespace LispExpr {
+  export type LispExpr =
+    | Symbol
+    | Number
+    | String
+    | Boolean
+    | List
+    | If
+    | Lambda
+    | Let;
+
+  export type Symbol = { readonly type: "Symbol"; name: string };
+  export type Number = { readonly type: "Number"; value: number };
+  export type String = { readonly type: "String"; value: string };
+  export type Boolean = { readonly type: "Boolean"; value: boolean };
+  export type List = { readonly type: "List"; items: LispExpr[] };
+
+  export type If = {
+    readonly type: "If";
+    condition: LispExpr;
+    consequent: LispExpr;
+    alternate: LispExpr;
+  };
+
+  export type Lambda = {
+    readonly type: "Lambda";
+    params: string[];
+    body: LispExpr;
+  };
+
+  export type Let = {
+    readonly type: "Let";
+    bindings: Array<{ name: string; value: LispExpr }>;
+    body: LispExpr;
+  };
+}
+```
+
+## Complete Implementation
+
+```typescript
+import {
+  atomic,
+  char,
+  commit,
+  digit,
+  eof,
+  many,
+  many1,
+  optional,
+  or,
+  parser,
+  Parser,
+  regex,
+  skipMany0,
+  string,
+  takeUpto
+} from "parserator";
+
+// Whitespace and comments
+const whitespace = regex(/\s+/).label("whitespace");
+const lineComment = regex(/;[^\n]*/).label("line comment");
+const space = or(whitespace, lineComment);
+const spaces = skipMany0(space);
+
+function token<T>(parser: Parser<T>): Parser<T> {
+  return parser.trimLeft(spaces);
+}
+
+// Forward declaration for recursion
+export let expr: Parser<LispExpr.LispExpr>;
+
+// Symbol parsing
+const symbol = token(
+  parser(function* () {
+    const name = yield* regex(/[^()\s;]+/).label("symbol name");
+    if (name === "") {
+      return yield* Parser.fatal("Empty symbol");
+    }
+    return LispExpr.symbol(name);
+  })
+);
+
+// Number parsing
+const number = token(
+  parser(function* () {
+    const sign = (yield* optional(char("-"))) ?? "";
+    const digits = yield* many1(digit).expect("Expected digit in number");
+    const decimalPart = yield* optional(
+      parser(function* () {
+        yield* char(".");
+        const fractionalDigits = yield* many1(digit).expect(
+          "Expected digits after decimal point"
+        );
+        return "." + fractionalDigits.join("");
+      })
+    );
+
+    const numberStr = sign + digits.join("") + (decimalPart ?? "");
+    const value = parseFloat(numberStr);
+    return LispExpr.number(value);
+  })
+);
+
+// String parsing
+const stringLiteral = token(
+  parser(function* () {
+    yield* char('"');
+    yield* commit();
+
+    const value = yield* takeUpto(char('"'));
+    yield* char('"').expect("closing quote for string literal");
+    return LispExpr.string(value);
+  })
+);
+
+// Boolean parsing
+const boolean = token(
+  or(
+    string("#t").map(() => LispExpr.bool(true)),
+    string("#f").map(() => LispExpr.bool(false))
+  ).label("boolean")
+);
+
+// Atoms (non-list values)
+const atom = or(boolean, number, stringLiteral, symbol);
+
+// List parsing
+const list = atomic(
+  parser(function* () {
+    yield* token(char("("));
+    yield* commit();
+
+    const items = yield* many(Parser.lazy(() => expr));
+
+    yield* token(char(")")).expect("closing parenthesis ')'");
+    return items;
+  })
+);
+```
+
+## Special Form Parsers
+
+### Lambda Expressions
+
+```typescript
+const lambdaParser = (items: LispExpr.LispExpr[]) =>
+  parser(function* () {
+    if (items.length !== 3) {
+      return yield* Parser.fatal(
+        "Lambda requires exactly 3 elements: (lambda (params...) body)"
+      );
+    }
+
+    const [lambdaSymbol, paramsExpr, bodyExpr] = items;
+
+    if (lambdaSymbol.type !== "Symbol" || lambdaSymbol.name !== "lambda") {
+      return yield* Parser.fatal("Expected 'lambda' keyword");
+    }
+
+    if (paramsExpr.type !== "List") {
+      return yield* Parser.fatal("Lambda parameters must be a list");
+    }
+
+    const params: string[] = [];
+    for (const param of paramsExpr.items) {
+      if (param.type !== "Symbol") {
+        return yield* Parser.fatal("Lambda parameters must be symbols");
+      }
+      params.push(param.name);
+    }
+
+    return LispExpr.lambda(params, bodyExpr);
+  });
+```
+
+### Let Expressions
+
+```typescript
+const letParser = (items: LispExpr.LispExpr[]) =>
+  parser(function* () {
+    if (items.length !== 3) {
+      return yield* Parser.fatal(
+        "Let requires exactly 3 elements: (let ((var val)...) body)"
+      );
+    }
+
+    const [letSymbol, bindingsExpr, bodyExpr] = items;
+
+    if (letSymbol.type !== "Symbol" || letSymbol.name !== "let") {
+      return yield* Parser.fatal("Expected 'let' keyword");
+    }
+
+    if (bindingsExpr.type !== "List") {
+      return yield* Parser.fatal("Let bindings must be a list");
+    }
+
+    const bindings: LispExpr.Let["bindings"] = [];
+    for (const binding of bindingsExpr.items) {
+      if (binding.type !== "List" || binding.items.length !== 2) {
+        return yield* Parser.fatal(
+          "Each let binding must be a list of exactly 2 elements"
+        );
+      }
+
+      const [nameExpr, valueExpr] = binding.items;
+      if (nameExpr.type !== "Symbol") {
+        return yield* Parser.fatal("Let binding name must be a symbol");
+      }
+
+      bindings.push({ name: nameExpr.name, value: valueExpr });
+    }
+
+    return LispExpr.let(bindings, bodyExpr);
+  });
+```
+
+### If Expressions
+
+```typescript
+const ifParser = (items: LispExpr.LispExpr[]) =>
+  parser(function* () {
+    if (items.length !== 4) {
+      return yield* Parser.fatal(
+        "If requires exactly 4 elements: (if condition consequent alternate)"
+      );
+    }
+
+    const [ifSymbol, condition, consequent, alternate] = items;
+
+    if (ifSymbol.type !== "Symbol" || ifSymbol.name !== "if") {
+      return yield* Parser.fatal("Expected 'if' keyword");
+    }
+
+    return LispExpr.if(condition, consequent, alternate);
+  });
+```
+
+## Main Expression Parser
+
+```typescript
+// Enhanced list parser with special form detection
+const listParser = list.flatMap(items =>
+  parser(function* () {
+    if (items.length === 0) {
+      return yield* Parser.fatal("Empty list not allowed");
+    }
+
+    const first = items[0];
+    if (first.type === "Symbol") {
+      switch (first.name) {
+        case "lambda":
+          return yield* lambdaParser(items);
+        case "let":
+          return yield* letParser(items);
+        case "if":
+          return yield* ifParser(items);
+      }
+    }
+
+    return LispExpr.list(items);
+  })
+);
+
+// Main expression parser
+expr = parser(function* () {
+  yield* spaces;
+  const isList = yield* peekAhead(1).map(x => x === "(");
+  const result = yield* isList ? listParser : atom;
+  yield* spaces;
+  return result;
+});
+
+// Single expression parser
+export const lispParser = parser(function* () {
+  yield* spaces;
+  const result = yield* expr;
+  yield* spaces;
+  yield* eof.expect("end of input");
+  return result;
+});
+```
+
+## Usage Examples
+
+### Basic Atoms
+
+```typescript
+lispParser.parseOrThrow("42");
+// { type: "Number", value: 42 }
+
+lispParser.parseOrThrow("#t");
+// { type: "Boolean", value: true }
+
+lispParser.parseOrThrow("my-variable");
+// { type: "Symbol", name: "my-variable" }
+```
+
+### Lists
+
+```typescript
+lispParser.parseOrThrow("(+ 1 2)");
+// {
+//   type: "List",
+//   items: [
+//     { type: "Symbol", name: "+" },
+//     { type: "Number", value: 1 },
+//     { type: "Number", value: 2 }
+//   ]
+// }
+```
+
+### Lambda Expression
+
+```typescript
+lispParser.parseOrThrow("(lambda (x y) (+ x y))");
+// {
+//   type: "Lambda",
+//   params: ["x", "y"],
+//   body: {
+//     type: "List",
+//     items: [...]
+//   }
+// }
+```
+
+### Let Expression
+
+```typescript
+lispParser.parseOrThrow("(let ((x 1) (y 2)) (+ x y))");
+// {
+//   type: "Let",
+//   bindings: [
+//     { name: "x", value: { type: "Number", value: 1 } },
+//     { name: "y", value: { type: "Number", value: 2 } }
+//   ],
+//   body: { type: "List", items: [...] }
+// }
+```
+
+### Complex Nested Example
+
+```typescript
+const code = `
+(let ((factorial (lambda (n)
+                   (if (= n 0)
+                       1
+                       (* n (factorial (- n 1)))))))
+  (factorial 5))
+`;
+
+const ast = lispParser.parseOrThrow(code);
+```
+
+## Key Takeaways
+
+1. **Recursive structures**: Lists can contain other lists, requiring `Parser.lazy()`
+2. **Special form detection**: Use `flatMap()` to inspect parsed lists and transform them
+3. **AST validation**: Parser can enforce syntactic rules (e.g., lambda parameter count)
+4. **Strongly typed**: TypeScript types ensure AST correctness at compile time
+5. **Error messages**: Use `Parser.fatal()` for semantic errors vs syntax errors
+6. **Comments**: The `spaces` parser handles both whitespace and line comments

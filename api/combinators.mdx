@@ -1,0 +1,722 @@
+---
+title: "Combinators"
+description: "Core combinator functions for building parsers"
+---
+
+Parsers are composed using **combinators** - functions that create or combine parsers. Parserator provides a comprehensive set of combinators organized into logical categories.
+
+## Character Matching
+
+### char
+
+Matches a single specific character.
+
+```ts
+const char: <T extends string>(ch: T) => Parser<T>
+```
+
+<ParamField path="ch" type="string" required>
+  The character to match (must be a single character)
+</ParamField>
+
+**Example:**
+```ts
+const parser = char('a')
+parser.run('abc') // Right(['a', {...}])
+parser.run('xyz') // Left(error)
+```
+
+### string
+
+Matches an exact string in the input.
+
+```ts
+const string: (str: string) => Parser<string>
+```
+
+<ParamField path="str" type="string" required>
+  The string to match
+</ParamField>
+
+**Example:**
+```ts
+const parser = string("hello")
+parser.run("hello world") // Right(["hello", {...}])
+parser.run("goodbye") // Left(error)
+```
+
+### narrowedString
+
+Matches an exact string literal type, preserving the literal type information.
+
+```ts
+const narrowedString: <const T extends string>(str: T) => Parser<T>
+```
+
+<ParamField path="str" type="string literal" required>
+  The string literal to match
+</ParamField>
+
+**Example:**
+```ts
+const parser = narrowedString("hello") // Parser<"hello">
+parser.run("hello world") // Right(["hello", {...}])
+```
+
+### alphabet
+
+Matches any single alphabetic character (a-z, A-Z).
+
+```ts
+const alphabet: Parser<string>
+```
+
+**Example:**
+```ts
+alphabet.run("abc") // Right(["a", {...}])
+alphabet.run("123") // Left(error)
+```
+
+### digit
+
+Matches any single digit character (0-9).
+
+```ts
+const digit: Parser<string>
+```
+
+**Example:**
+```ts
+digit.run("123") // Right(["1", {...}])
+digit.run("abc") // Left(error)
+```
+
+### anyChar
+
+Matches any single character.
+
+```ts
+const anyChar: () => Parser<string>
+```
+
+**Example:**
+```ts
+anyChar().run("hello") // Right(["h", {...}])
+```
+
+### notChar
+
+Matches any character except the specified one.
+
+```ts
+const notChar: (ch: string) => Parser<string>
+```
+
+<ParamField path="ch" type="string" required>
+  The character to exclude (must be a single character)
+</ParamField>
+
+**Example:**
+```ts
+const notQuote = notChar('"')
+notQuote.parse('a') // Success: 'a'
+notQuote.parse('"') // Error
+```
+
+### regex
+
+Matches input against a regular expression. The regex must match at the start of the input.
+
+```ts
+const regex: (re: RegExp) => Parser<string>
+```
+
+<ParamField path="re" type="RegExp" required>
+  The regular expression to match against
+</ParamField>
+
+**Example:**
+```ts
+const number = regex(/[0-9]+/)
+number.run("123abc") // Right(["123", {...}])
+```
+
+## Repetition
+
+### many
+
+Matches zero or more occurrences of a parser.
+
+```ts
+const many: <T>(parser: Parser<T>) => Parser<T[]>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+**Example:**
+```ts
+const digits = many(digit)
+digits.run("123abc") // Right([["1", "2", "3"], {...}])
+digits.run("abc") // Right([[], {...}]) - zero matches is OK
+```
+
+### many0
+
+Matches zero or more occurrences (alias for `many`).
+
+```ts
+const many0: <S, T>(parser: Parser<T>, separator?: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+<ParamField path="separator" type="Parser<S>">
+  Optional separator parser between occurrences
+</ParamField>
+
+### many1
+
+Matches one or more occurrences of a parser.
+
+```ts
+const many1: <S, T>(parser: Parser<T>, separator?: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+<ParamField path="separator" type="Parser<S>">
+  Optional separator parser between occurrences
+</ParamField>
+
+**Example:**
+```ts
+const digits = many1(digit)
+digits.run("123abc") // Right([["1", "2", "3"], {...}])
+digits.run("abc") // Left(error) - at least one required
+```
+
+### manyN
+
+Matches at least n occurrences of a parser.
+
+```ts
+const manyN: <S, T>(parser: Parser<T>, n: number, separator?: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+<ParamField path="n" type="number" required>
+  Minimum number of required repetitions
+</ParamField>
+
+<ParamField path="separator" type="Parser<S>">
+  Optional separator parser between occurrences
+</ParamField>
+
+### manyNExact
+
+Matches exactly n occurrences of a parser.
+
+```ts
+const manyNExact: <S, T>(par: Parser<T>, n: number, separator?: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="par" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+<ParamField path="n" type="number" required>
+  Exact number of required repetitions
+</ParamField>
+
+<ParamField path="separator" type="Parser<S>">
+  Optional separator parser between occurrences
+</ParamField>
+
+### count
+
+Parses exactly n occurrences of a parser.
+
+```ts
+const count: <T>(n: number, par: Parser<T>) => Parser<T[]>
+```
+
+<ParamField path="n" type="number" required>
+  The exact number of occurrences
+</ParamField>
+
+<ParamField path="par" type="Parser<T>" required>
+  The parser to repeat
+</ParamField>
+
+**Example:**
+```ts
+const threeDigits = count(3, digit)
+threeDigits.parse("123") // Success: ['1', '2', '3']
+threeDigits.parse("12") // Error: not enough matches
+```
+
+### skipMany0
+
+Skips zero or more occurrences of a parser without collecting results.
+
+```ts
+const skipMany0: <T>(parser: Parser<T>) => Parser<undefined>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to skip
+</ParamField>
+
+### skipMany1
+
+Skips one or more occurrences of a parser without collecting results.
+
+```ts
+const skipMany1: <T>(parser: Parser<T>) => Parser<undefined>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to skip (requires at least one match)
+</ParamField>
+
+### skipManyN
+
+Skips exactly n occurrences of a parser.
+
+```ts
+const skipManyN: <T>(parser: Parser<T>, n: number) => Parser<undefined>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to skip
+</ParamField>
+
+<ParamField path="n" type="number" required>
+  Number of required repetitions to skip
+</ParamField>
+
+## Alternatives
+
+### or
+
+Tries multiple parsers in order until one succeeds. Supports commit-aware parsing for better error messages.
+
+```ts
+const or: <Parsers extends Parser<any>[]>(
+  ...parsers: Parsers
+) => Parser<Parsers[number] extends Parser<infer T> ? T : never>
+```
+
+<ParamField path="parsers" type="Parser<any>[]" required>
+  Array of parsers to try in order
+</ParamField>
+
+**Example:**
+```ts
+const value = or(
+  numberLiteral,
+  stringLiteral,
+  booleanLiteral
+)
+```
+
+**With commit for better errors:**
+```ts
+const statement = or(
+  parser(function* () {
+    yield* keyword("if")
+    yield* commit()  // No backtracking after this
+    yield* char('(').expect("opening parenthesis")
+    // ...
+  }),
+  whileStatement,
+  assignment
+)
+```
+
+### optional
+
+Makes a parser optional. Returns `undefined` if the parser fails.
+
+```ts
+const optional: <T>(parser: Parser<T>) => Parser<T | undefined>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to make optional
+</ParamField>
+
+**Example:**
+```ts
+const sign = optional(char('-'))
+sign.run('-5') // Right(['-', {...}])
+sign.run('5') // Right([undefined, {...}])
+```
+
+## Sequences
+
+### sequence
+
+Runs multiple parsers in sequence and returns all results as a tuple.
+
+```ts
+const sequence: <const T extends any[]>(
+  parsers: T
+) => Parser<SequenceOutput<T>>
+```
+
+<ParamField path="parsers" type="Parser[]" required>
+  Array of parsers to run in sequence
+</ParamField>
+
+**Example:**
+```ts
+const parser = sequence([digit, char('-'), digit])
+parser.run('1-2') // Right([['1', '-', '2'], {...}])
+```
+
+### sepBy
+
+Matches zero or more occurrences of elements separated by a separator.
+
+```ts
+const sepBy: <S, T>(parser: Parser<T>, sepParser: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  Parser for the elements
+</ParamField>
+
+<ParamField path="sepParser" type="Parser<S>" required>
+  Parser for the separator between elements
+</ParamField>
+
+**Example:**
+```ts
+const parser = sepBy(digit, char(','))
+parser.run("1,2,3") // Right([["1", "2", "3"], {...}])
+parser.run("") // Right([[], {...}])
+```
+
+### sepBy1
+
+Matches one or more occurrences separated by a separator. Requires at least one match.
+
+```ts
+const sepBy1: <S, T>(par: Parser<T>, sepParser: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="par" type="Parser<T>" required>
+  Parser for the elements
+</ParamField>
+
+<ParamField path="sepParser" type="Parser<S>" required>
+  Parser for the separator
+</ParamField>
+
+**Example:**
+```ts
+const numbers = sepBy1(number, char(','))
+numbers.parse("1,2,3") // Success: [1, 2, 3]
+numbers.parse("") // Error: Expected at least one element
+```
+
+### sepEndBy
+
+Parses a list with optional trailing separator.
+
+```ts
+const sepEndBy: <S, T>(par: Parser<T>, sep: Parser<S>) => Parser<T[]>
+```
+
+<ParamField path="par" type="Parser<T>" required>
+  Parser for list elements
+</ParamField>
+
+<ParamField path="sep" type="Parser<S>" required>
+  Parser for separators
+</ParamField>
+
+**Example:**
+```ts
+const list = sepEndBy(number, char(','))
+list.parse("1,2,3") // Success: [1, 2, 3]
+list.parse("1,2,3,") // Success: [1, 2, 3] (trailing comma OK)
+```
+
+### between
+
+Matches content between two delimiters.
+
+```ts
+const between: <T>(
+  start: Parser<any>,
+  end: Parser<any>,
+  par: Parser<T>
+) => Parser<T>
+```
+
+<ParamField path="start" type="Parser<any>" required>
+  Opening delimiter parser
+</ParamField>
+
+<ParamField path="end" type="Parser<any>" required>
+  Closing delimiter parser
+</ParamField>
+
+<ParamField path="par" type="Parser<T>" required>
+  Parser for content between delimiters
+</ParamField>
+
+**Example:**
+```ts
+const parser = between(char('('), char(')'), digit)
+parser.run('(5)') // Right(['5', {...}])
+parser.run('5') // Left(error)
+```
+
+### zip
+
+Runs two parsers in sequence and returns both results as a tuple.
+
+```ts
+const zip: <A, B>(parserA: Parser<A>, parserB: Parser<B>) => Parser<[A, B]>
+```
+
+<ParamField path="parserA" type="Parser<A>" required>
+  First parser
+</ParamField>
+
+<ParamField path="parserB" type="Parser<B>" required>
+  Second parser
+</ParamField>
+
+### then / zipRight
+
+Runs two parsers in sequence, keeping only the second result.
+
+```ts
+const then: <A, B>(parserA: Parser<A>, parserB: Parser<B>) => Parser<B>
+const zipRight: <A, B>(parserA: Parser<A>, parserB: Parser<B>) => Parser<B>
+```
+
+<ParamField path="parserA" type="Parser<A>" required>
+  First parser (result discarded)
+</ParamField>
+
+<ParamField path="parserB" type="Parser<B>" required>
+  Second parser (result kept)
+</ParamField>
+
+### thenDiscard / zipLeft
+
+Runs two parsers in sequence, keeping only the first result.
+
+```ts
+const thenDiscard: <A, B>(parserA: Parser<A>, parserB: Parser<B>) => Parser<A>
+const zipLeft: <A, B>(parserA: Parser<A>, parserB: Parser<B>) => Parser<A>
+```
+
+<ParamField path="parserA" type="Parser<A>" required>
+  First parser (result kept)
+</ParamField>
+
+<ParamField path="parserB" type="Parser<B>" required>
+  Second parser (result discarded)
+</ParamField>
+
+## Lookahead
+
+### lookahead
+
+Looks ahead in the input without consuming any input.
+
+```ts
+const lookahead: <T>(par: Parser<T>) => Parser<T | undefined>
+```
+
+<ParamField path="par" type="Parser<T>" required>
+  The parser to look ahead with
+</ParamField>
+
+**Example:**
+```ts
+const parser = lookahead(char('a'))
+parser.run('abc') // Right(['a', {...}])
+// Input position remains at 'abc', 'a' is not consumed
+```
+
+### notFollowedBy
+
+Succeeds only if the given parser fails to match.
+
+```ts
+const notFollowedBy: <T>(par: Parser<T>) => Parser<boolean>
+```
+
+<ParamField path="par" type="Parser<T>" required>
+  The parser that should not match
+</ParamField>
+
+**Example:**
+```ts
+const notA = notFollowedBy(char('a'))
+notA.run('bcd') // Right([true, {...}]) - Succeeds because 'a' is not found
+notA.run('abc') // Left(error) - Fails because 'a' is found
+```
+
+## Control Flow
+
+### commit / cut
+
+Commits to the current parsing path, preventing backtracking. After calling `commit()`, if parsing fails, the parser won't try alternatives in `or` combinators.
+
+```ts
+const commit: () => Parser<void>
+const cut: () => Parser<void>  // Alias using Prolog-style naming
+```
+
+**Example:**
+```ts
+const ifStatement = parser(function* () {
+  yield* keyword("if")
+  yield* commit()  // No backtracking after this point
+  yield* char('(').expect("opening parenthesis after 'if'")
+  const condition = yield* expression
+  yield* char(')').expect("closing parenthesis")
+  const body = yield* block
+  return { type: "if", condition, body }
+})
+```
+
+### atomic
+
+Creates an atomic parser that either fully succeeds or resets to the original state.
+
+```ts
+const atomic: <T>(parser: Parser<T>) => Parser<T>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to make atomic
+</ParamField>
+
+**Example:**
+```ts
+const functionCall = atomic(
+  parser(function* () {
+    const name = yield* identifier
+    yield* char('(')
+    const args = yield* sepBy(expression, char(','))
+    yield* char(')')
+    return { name, args }
+  })
+)
+```
+
+## Utilities
+
+### skipUntil
+
+Skips input until the given parser succeeds.
+
+```ts
+const skipUntil: <T>(parser: Parser<T>) => Parser<undefined>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to look for
+</ParamField>
+
+### takeUntil
+
+Takes input until the given parser succeeds.
+
+```ts
+const takeUntil: <T>(parser: Parser<T>) => Parser<string>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to look for
+</ParamField>
+
+### takeUpto
+
+Takes input until the given parser would succeed, without consuming the parser.
+
+```ts
+const takeUpto: <T>(parser: Parser<T>) => Parser<string>
+```
+
+<ParamField path="parser" type="Parser<T>" required>
+  The parser to look for (not consumed)
+</ParamField>
+
+### parseUntilChar
+
+Takes input until the given character is found.
+
+```ts
+const parseUntilChar: (char: string) => Parser<string>
+```
+
+<ParamField path="char" type="string" required>
+  The character to look for
+</ParamField>
+
+**Example:**
+```ts
+const untilQuote = parseUntilChar('"')
+untilQuote.run('hello"world') // Right(['hello', {...}])
+```
+
+### skipSpaces
+
+Skips any number of space characters.
+
+```ts
+const skipSpaces: Parser<undefined>
+```
+
+**Example:**
+```ts
+skipSpaces.run('   hello') // Right([undefined, {...}]) - positioned at 'hello'
+```
+
+### eof
+
+Succeeds only at the end of input.
+
+```ts
+const eof: Parser<void>
+```
+
+**Example:**
+```ts
+const parser = string("hello").then(eof)
+parser.parse("hello") // Success
+parser.parse("hello world") // Error: Expected end of input
+```
+
+### position
+
+Returns the current source position.
+
+```ts
+const position: Parser<SourcePosition>
+```
+
+**Example:**
+```ts
+const pos = yield* position
+// pos: { offset: number, line: number, column: number }
+```

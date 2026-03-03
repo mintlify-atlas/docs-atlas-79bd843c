@@ -1,0 +1,316 @@
+---
+title: "Error Formatter"
+description: "Format parse errors for display in multiple output formats"
+---
+
+## Overview
+
+The `ErrorFormatter` class transforms `ParseErrorBundle` objects into human-readable error messages. It supports multiple output formats including plain text, ANSI-colored terminal output, HTML, and JSON.
+
+## ErrorFormatter Class
+
+```typescript
+class ErrorFormatter {
+  constructor(
+    format?: ErrorFormat,
+    options?: ErrorFormatterOptions
+  )
+
+  format(bundle: ParseErrorBundle): string
+  withOptions(options: Partial<ErrorFormatterOptions>): ErrorFormatter
+  withFormat(format: ErrorFormat): ErrorFormatter
+}
+```
+
+### Supported Formats
+
+```typescript
+type ErrorFormat = "plain" | "ansi" | "html" | "json";
+```
+
+- **plain**: Plain text without colors (default)
+- **ansi**: Terminal output with ANSI color codes
+- **html**: HTML with semantic classes for styling
+- **json**: Structured JSON for programmatic consumption
+
+## Formatter Options
+
+```typescript
+type ErrorFormatterOptions = {
+  maxContextLines?: number;   // Lines of context to show (default: 3)
+  showHints?: boolean;        // Show typo hints (default: true)
+  colorize?: boolean;         // Use colors (default: true)
+  showContext?: boolean;      // Show context stack (default: true)
+  tabSize?: number;           // Tab size for JSON (default: 2)
+};
+```
+
+## Basic Usage
+
+### Creating a Formatter
+
+```typescript
+import { ErrorFormatter } from "parserator";
+
+// Default plain text formatter
+const formatter = new ErrorFormatter();
+
+// ANSI formatter for terminal
+const ansiFormatter = new ErrorFormatter("ansi");
+
+// With custom options
+const customFormatter = new ErrorFormatter("ansi", {
+  maxContextLines: 5,
+  showHints: true,
+  showContext: true
+});
+```
+
+### Formatting Errors
+
+```typescript
+const bundle = new ParseErrorBundle(errors, sourceCode);
+const output = formatter.format(bundle);
+console.log(output);
+```
+
+## Output Formats
+
+### Plain Text Format
+
+Simple text output without colors, suitable for logs or non-terminal environments.
+
+```typescript
+const formatter = new ErrorFormatter("plain");
+const output = formatter.format(bundle);
+```
+
+**Example output:**
+```
+Error at line 3, column 10:
+    1 | function greet(name) {
+    2 |   console.log("Hello, " + name);
+>   3 |   return nmae;
+    |
+          ^^^^^^^^^^
+  Unexpected: nmae
+
+  Did you mean: name?
+
+  Context: function declaration > return statement
+```
+
+### ANSI Format
+
+Terminal output with colors using ANSI escape codes.
+
+```typescript
+const formatter = new ErrorFormatter("ansi");
+const output = formatter.format(bundle);
+```
+
+**Features:**
+- Red error messages and carets
+- Yellow "Expected:" labels
+- Cyan hints
+- Gray context information
+
+**Example output:**
+```
+[31mError[0m at line 3, column 10:
+    1 | function greet(name) {
+    2 |   console.log("Hello, " + name);
+>   3 |   return nmae;
+    |
+          [31m^^^^^^^^^^[0m
+  [33mExpected:[0m identifier, found nmae
+
+  [36mDid you mean: name?[0m
+
+  [90mContext: function declaration > return statement[0m
+```
+
+### HTML Format
+
+HTML output with semantic classes for custom styling.
+
+```typescript
+const formatter = new ErrorFormatter("html");
+const html = formatter.format(bundle);
+```
+
+**Example output:**
+```html
+<div class="parse-error">
+  <div class="error-header">Error at line 3, column 10:</div>
+  <div class="error-context">
+    <div class="context-line">    1 | function greet(name) {</div>
+    <div class="context-line">    2 |   console.log("Hello, " + name);</div>
+    <div class="context-line">&gt;   3 |   return nmae;</div>
+    <div class="error-pointer">          ^^^^^^^^^^</div>
+  </div>
+  <div class="error-message">  Unexpected: nmae</div>
+  <div class="error-hints">
+    <div class="hint">Did you mean: <span class="suggestion">name</span>?</div>
+  </div>
+  <div class="error-context-stack">Context: <span class="context-item">function declaration</span> &gt; <span class="context-item">return statement</span></div>
+</div>
+```
+
+**CSS Classes:**
+- `.parse-error`: Container for the entire error
+- `.error-header`: Location information
+- `.error-context`: Code context section
+- `.context-line`: Individual context lines
+- `.error-line`: The line with the error
+- `.error-pointer`: Caret/pointer line
+- `.error-message`: The error message
+- `.error-hints`: Container for hints
+- `.hint`: Individual hint
+- `.suggestion`: Suggested correction
+- `.error-context-stack`: Parser context stack
+- `.context-item`: Individual context item
+
+### JSON Format
+
+Structured JSON output for programmatic error handling.
+
+```typescript
+const formatter = new ErrorFormatter("json");
+const json = formatter.format(bundle);
+const data = JSON.parse(json);
+```
+
+**Example output:**
+```json
+{
+  "error": {
+    "type": "Unexpected",
+    "message": "Unexpected: nmae",
+    "location": {
+      "line": 3,
+      "column": 10,
+      "offset": 45,
+      "length": 4
+    },
+    "context": {
+      "lines": [
+        "    1 | function greet(name) {",
+        "    2 |   console.log(\"Hello, \" + name);",
+        ">   3 |   return nmae;"
+      ],
+      "stack": ["function declaration", "return statement"]
+    },
+    "hints": ["name"],
+    "source": "function greet(name) {\n  console.log(\"Hello, \" + name);\n  return nmae;\n}"
+  },
+  "allErrors": [
+    {
+      "type": "Unexpected",
+      "location": {
+        "line": 3,
+        "column": 10,
+        "offset": 45,
+        "length": 4
+      },
+      "context": ["function declaration", "return statement"],
+      "found": "nmae"
+    }
+  ]
+}
+```
+
+## Customizing Output
+
+### Modifying Options
+
+Create a new formatter with different options:
+
+```typescript
+const formatter = new ErrorFormatter("ansi");
+
+// Create variant with more context
+const moreContext = formatter.withOptions({ 
+  maxContextLines: 7 
+});
+
+// Disable hints
+const noHints = formatter.withOptions({ 
+  showHints: false 
+});
+```
+
+### Changing Format
+
+Create a new formatter with a different output format:
+
+```typescript
+const plainFormatter = new ErrorFormatter("plain");
+const ansiFormatter = plainFormatter.withFormat("ansi");
+```
+
+### Context Lines
+
+Control how many lines of source code are shown around the error:
+
+```typescript
+const formatter = new ErrorFormatter("plain", {
+  maxContextLines: 5  // Show 2 lines above and below
+});
+```
+
+The formatter shows lines around the error position:
+- `maxContextLines: 1` - Only the error line
+- `maxContextLines: 3` - Error line + 1 above/below (default)
+- `maxContextLines: 5` - Error line + 2 above/below
+
+## Convenience Functions
+
+Quick formatting without creating a formatter instance:
+
+```typescript
+import { formatError } from "parserator";
+
+const bundle = new ParseErrorBundle(errors, sourceCode);
+
+// Quick format with defaults
+const plain = formatError.plain(bundle);
+const ansi = formatError.ansi(bundle);
+const html = formatError.html(bundle);
+const json = formatError.json(bundle);
+
+// With custom options
+const formatted = formatError.ansi(bundle, {
+  maxContextLines: 5,
+  showHints: true
+});
+```
+
+## Integration with ParseErrorBundle
+
+The `ParseErrorBundle` class has built-in formatting support:
+
+```typescript
+const bundle = new ParseErrorBundle(errors, sourceCode);
+
+// Format using the bundle's format method
+console.log(bundle.format("ansi"));
+console.log(bundle.format("plain"));
+console.log(bundle.format("html"));
+console.log(bundle.format("json"));
+```
+
+## Best Practices
+
+1. **Use ANSI format** for CLI tools and terminal output
+2. **Use plain format** for log files and non-terminal environments
+3. **Use HTML format** for web-based editors or documentation
+4. **Use JSON format** for programmatic error handling or IDE integration
+5. **Show context** to help users locate errors quickly
+6. **Enable hints** to improve the user experience for typos
+7. **Adjust maxContextLines** based on your use case (more for complex files, less for simple parsers)
+
+## Related
+
+- [Errors](/api/errors) - Core error types
+- [Hints](/api/hints) - Typo suggestion system

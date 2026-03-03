@@ -1,0 +1,475 @@
+---
+title: Combinators
+description: Core combinator functions for building parsers
+---
+
+Combinators are functions that create or combine parsers. Parserator provides a rich set of combinators organized by their purpose.
+
+## Character Parsers
+
+### char()
+
+Matches a single specific character:
+
+```typescript
+const char: <T extends string>(ch: T) => Parser<T>
+```
+
+```typescript
+const openParen = char('(');
+openParen.parse("(abc)"); // succeeds with "("
+openParen.parse("abc");   // fails
+```
+
+### string()
+
+Matches an exact string:
+
+```typescript
+const string: (str: string) => Parser<string>
+```
+
+```typescript
+const hello = string("hello");
+hello.parse("hello world"); // succeeds with "hello"
+hello.parse("goodbye");     // fails
+```
+
+### narrowedString()
+
+Like `string()` but preserves the literal type:
+
+```typescript
+const narrowedString: <const T extends string>(str: T) => Parser<T>
+```
+
+```typescript
+const hello = narrowedString("hello"); // Parser<"hello">
+```
+
+### regex()
+
+Matches input against a regular expression:
+
+```typescript
+const regex: (re: RegExp) => Parser<string>
+```
+
+```typescript
+const identifier = regex(/[a-zA-Z_][a-zA-Z0-9_]*/);
+identifier.parse("myVar123"); // succeeds with "myVar123"
+
+const number = regex(/-?[0-9]+/).map(Number);
+number.parse("-42"); // succeeds with -42
+```
+
+### anyChar()
+
+Matches any single character:
+
+```typescript
+const anyChar: () => Parser<string>
+```
+
+```typescript
+anyChar().parse("a"); // succeeds with "a"
+anyChar().parse("");  // fails at end of input
+```
+
+### notChar()
+
+Matches any character except the specified one:
+
+```typescript
+const notChar: (ch: string) => Parser<string>
+```
+
+```typescript
+const notQuote = notChar('"');
+notQuote.parse("a"); // succeeds with "a"
+notQuote.parse('"'); // fails
+```
+
+### alphabet
+
+Matches any alphabetic character (a-z, A-Z):
+
+```typescript
+const alphabet: Parser<string>
+```
+
+```typescript
+alphabet.parse("a"); // succeeds with "a"
+alphabet.parse("1"); // fails
+```
+
+### digit
+
+Matches any digit character (0-9):
+
+```typescript
+const digit: Parser<string>
+```
+
+```typescript
+digit.parse("5"); // succeeds with "5"
+digit.parse("a"); // fails
+```
+
+## Repetition Combinators
+
+### many()
+
+Matches zero or more occurrences:
+
+```typescript
+const many: <T>(parser: Parser<T>) => Parser<T[]>
+```
+
+```typescript
+const digits = many(digit);
+digits.parse("123");  // succeeds with ["1", "2", "3"]
+digits.parse("");     // succeeds with []
+digits.parse("abc");  // succeeds with []
+```
+
+Alias: `many0()`
+
+### many1()
+
+Matches one or more occurrences:
+
+```typescript
+const many1: <T>(parser: Parser<T>) => Parser<T[]>
+```
+
+```typescript
+const digits = many1(digit);
+digits.parse("123");  // succeeds with ["1", "2", "3"]
+digits.parse("");     // fails (requires at least one)
+```
+
+### manyN()
+
+Matches at least n occurrences:
+
+```typescript
+const manyN: <T>(parser: Parser<T>, n: number) => Parser<T[]>
+```
+
+```typescript
+const atLeast3 = manyN(digit, 3);
+atLeast3.parse("1234");  // succeeds with ["1", "2", "3", "4"]
+atLeast3.parse("12");    // fails
+```
+
+### count()
+
+Matches exactly n occurrences:
+
+```typescript
+const count: <T>(n: number, parser: Parser<T>) => Parser<T[]>
+```
+
+```typescript
+const threeDigits = count(3, digit);
+threeDigits.parse("123");  // succeeds with ["1", "2", "3"]
+threeDigits.parse("12");   // fails
+threeDigits.parse("1234"); // succeeds with ["1", "2", "3"], leaves "4"
+```
+
+### skipMany0(), skipMany1()
+
+Skips zero or more / one or more occurrences:
+
+```typescript
+const skipMany0: <T>(parser: Parser<T>) => Parser<undefined>
+const skipMany1: <T>(parser: Parser<T>) => Parser<undefined>
+```
+
+```typescript
+const skipWhitespace = skipMany0(regex(/\s/));
+```
+
+## Alternative Combinators
+
+### or()
+
+Tries parsers in order until one succeeds:
+
+```typescript
+const or: <Parsers extends Parser<any>[]>(
+  ...parsers: Parsers
+) => Parser<Parsers[number] extends Parser<infer T> ? T : never>
+```
+
+```typescript
+const value = or(
+  string("true").map(() => true),
+  string("false").map(() => false),
+  number()
+);
+
+value.parse("true");  // succeeds with true
+value.parse("false"); // succeeds with false
+value.parse("42");    // succeeds with 42
+```
+
+<Note>
+The `or()` combinator is commit-aware. If any parser sets the `committed` flag during parsing, no further alternatives will be tried.
+</Note>
+
+### optional()
+
+Makes a parser optional:
+
+```typescript
+const optional: <T>(parser: Parser<T>) => Parser<T | undefined>
+```
+
+```typescript
+const sign = optional(or(char('+'), char('-')));
+sign.parse("+");   // succeeds with "+"
+sign.parse("123"); // succeeds with undefined
+```
+
+## Sequence Combinators
+
+### sequence()
+
+Runs multiple parsers in sequence and returns all results:
+
+```typescript
+const sequence: <const T extends any[]>(
+  parsers: T
+) => Parser<SequenceOutput<T>>
+```
+
+```typescript
+const date = sequence([digit, digit, char('/'), digit, digit]);
+date.parse("12/25"); // succeeds with ["1", "2", "/", "2", "5"]
+```
+
+### sepBy()
+
+Parses zero or more occurrences separated by a separator:
+
+```typescript
+const sepBy: <S, T>(
+  parser: Parser<T>,
+  sepParser: Parser<S>
+) => Parser<T[]>
+```
+
+```typescript
+const numbers = sepBy(number(), char(','));
+numbers.parse("1,2,3"); // succeeds with [1, 2, 3]
+numbers.parse("");      // succeeds with []
+```
+
+### sepBy1()
+
+Parses one or more occurrences separated by a separator:
+
+```typescript
+const sepBy1: <S, T>(
+  parser: Parser<T>,
+  sepParser: Parser<S>
+) => Parser<T[]>
+```
+
+```typescript
+const numbers = sepBy1(number(), char(','));
+numbers.parse("1,2,3"); // succeeds with [1, 2, 3]
+numbers.parse("");      // fails (requires at least one)
+```
+
+### sepEndBy()
+
+Parses a list with optional trailing separator:
+
+```typescript
+const sepEndBy: <S, T>(
+  parser: Parser<T>,
+  sep: Parser<S>
+) => Parser<T[]>
+```
+
+```typescript
+const list = sepEndBy(number(), char(','));
+list.parse("1,2,3");  // succeeds with [1, 2, 3]
+list.parse("1,2,3,"); // succeeds with [1, 2, 3] (trailing comma OK)
+```
+
+### between()
+
+Parses content between two delimiters:
+
+```typescript
+const between: <T>(
+  start: Parser<any>,
+  end: Parser<any>,
+  parser: Parser<T>
+) => Parser<T>
+```
+
+```typescript
+const parens = between(char('('), char(')'), number());
+parens.parse("(42)"); // succeeds with 42
+
+const quoted = between(char('"'), char('"'), regex(/[^"]*/))
+quoted.parse('"hello"'); // succeeds with "hello"
+```
+
+## Lookahead Combinators
+
+### lookahead()
+
+Looks ahead without consuming input:
+
+```typescript
+const lookahead: <T>(parser: Parser<T>) => Parser<T | undefined>
+```
+
+```typescript
+const nextIsDigit = lookahead(digit);
+// Succeeds if next char is a digit, but doesn't consume it
+```
+
+### notFollowedBy()
+
+Succeeds only if the given parser fails:
+
+```typescript
+const notFollowedBy: <T>(parser: Parser<T>) => Parser<boolean>
+```
+
+```typescript
+const notA = notFollowedBy(char('a'));
+notA.parse("bcd"); // succeeds
+notA.parse("abc"); // fails
+```
+
+## Utility Combinators
+
+### takeUntil()
+
+Takes input until the given parser succeeds:
+
+```typescript
+const takeUntil: <T>(parser: Parser<T>) => Parser<string>
+```
+
+```typescript
+const untilQuote = takeUntil(char('"'));
+untilQuote.parse('hello"world'); // succeeds with "hello"
+```
+
+### takeUpto()
+
+Takes input until before the given parser would succeed:
+
+```typescript
+const takeUpto: <T>(parser: Parser<T>) => Parser<string>
+```
+
+### skipUntil()
+
+Skips input until the given parser succeeds:
+
+```typescript
+const skipUntil: <T>(parser: Parser<T>) => Parser<undefined>
+```
+
+### eof
+
+Matches only at the end of input:
+
+```typescript
+const eof: Parser<void>
+```
+
+```typescript
+const complete = identifier().thenDiscard(eof);
+complete.parse("hello");       // succeeds
+complete.parse("hello world"); // fails (not at end)
+```
+
+## Control Flow Combinators
+
+### commit()
+
+Prevents backtracking after this point:
+
+```typescript
+const commit: () => Parser<void>
+```
+
+```typescript
+import { parser, commit, keyword, char } from 'parserator';
+
+const ifStatement = parser(function* () {
+  yield* keyword("if");
+  yield* commit();  // No backtracking after this
+  yield* char('(').expect("opening parenthesis");
+  // ...
+});
+```
+
+Alias: `cut()`
+
+See the [Error Handling guide](/concepts/error-handling) for more details.
+
+### atomic()
+
+Makes a parser all-or-nothing (resets state on failure):
+
+```typescript
+const atomic: <T>(parser: Parser<T>) => Parser<T>
+```
+
+```typescript
+const keyword = atomic(regex(/[a-z]+/));
+// If it fails, no input is consumed
+```
+
+## Position Combinators
+
+### position
+
+Gets the current source position:
+
+```typescript
+const position: Parser<SourcePosition>
+```
+
+```typescript
+type SourcePosition = {
+  line: number;
+  column: number;
+  offset: number;
+}
+```
+
+```typescript
+const withPosition = parser(function* () {
+  const start = yield* position;
+  const value = yield* identifier();
+  const end = yield* position;
+  return { value, start, end };
+});
+```
+
+## Whitespace Helpers
+
+### skipSpaces
+
+Skips any number of space characters:
+
+```typescript
+const skipSpaces: Parser<undefined>
+```
+
+```typescript
+const token = <T>(p: Parser<T>) => p.trimLeft(skipSpaces);
+```
